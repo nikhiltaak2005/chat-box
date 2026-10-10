@@ -49,7 +49,9 @@ export default function App() {
     socket.on("disconnect", () => setStatus("Reconnecting…"));
     socket.on("connect_error", () => setStatus("Offline"));
     socket.on("message:new", msg => {
-      if (active && msg.conversationId === active.conversationId) setMessages(prev => [...prev, msg]);
+      const isCurrentConversation = active && msg.conversationId === active.conversationId;
+      if (isCurrentConversation) setMessages(prev => [...prev, msg]);
+      if (msg.senderId !== me?.id && !isCurrentConversation) window.desktop?.notifyIncoming();
       setContacts(prev => {
         const found = prev.find(c => c._id === msg.senderId || c._id === msg.recipientId);
         if (!found) request("/api/users", token).then(d => setContacts(d.users || [])).catch(() => {});
