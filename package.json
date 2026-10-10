@@ -1,0 +1,37 @@
+{
+  "name": "personal-messenger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Floating Windows person-to-person messenger",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"npm:server:dev\" \"npm:ui:dev\" \"npm:electron:dev\"",
+    "server:dev": "npm --prefix server run dev",
+    "ui:dev": "vite --host 127.0.0.1",
+    "electron:dev": "wait-on tcp:127.0.0.1:5173 && electron .",
+    "build:ui": "vite build",
+    "start:electron": "electron .",
+    "package:win": "npm run build:ui && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "build": {
+    "appId": "in.nnevolution.personal-messenger",
+    "productName": "Personal Messenger",
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "win": { "target": "nsis" },
+    "directories": { "output": "release" }
+  }
+}

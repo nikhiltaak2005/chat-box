@@ -1,0 +1,13 @@
+﻿node_modules/
+**/node_modules/
+dist/
+release/
+.env
+.env.*
+**/.env
+**/.env.*
+server/.env
+.dev.pid
+dev.out.log
+dev.err.log
+*.log
