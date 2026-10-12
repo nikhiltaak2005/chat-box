@@ -42,6 +42,8 @@ const { Schema } = mongoose;
 
 const userSchema = new Schema(
   {
+    role: { type: String, enum: ["user", "admin"], default: "user" },
+    isDisabled: { type: Boolean, default: false },
     username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24 },
     displayName: { type: String, trim: true, maxlength: 40, default: "" },
     avatarData: { type: String, default: "", maxlength: 1500000 },
@@ -71,6 +73,10 @@ const messageSchema = new Schema(
   },
   { timestamps: true }
 );
+
+const friendRequestSchema = new Schema({ senderId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true }, recipientId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true }, status: { type: String, enum: ["pending", "accepted", "rejected"], default: "pending" } }, { timestamps: true });
+friendRequestSchema.index({ senderId: 1, recipientId: 1 }, { unique: true });
+const FriendRequest = mongoose.model("FriendRequest", friendRequestSchema);
 
 const User = mongoose.model("User", userSchema);
 const Conversation = mongoose.model("Conversation", conversationSchema);
@@ -200,12 +206,12 @@ app.post("/api/auth/login", async (req, res, next) => {
     }
 
     const user = await User.findOne({ username });
-    if (!user) return res.status(401).json({ error: "Invalid username or password." });
+    if (!user || user.isDisabled) return res.status(401).json({ error: "Invalid username or password, or account disabled." });
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ error: "Invalid username or password." });
 
-    return res.json({ token: signToken(user._id), user: publicSelf(user) });
+    return res.json({ token: signToken(user._id), user: { ...publicSelf(user), role: user.role } });
   } catch (err) {
     return next(err);
   }
