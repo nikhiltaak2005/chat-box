@@ -64,6 +64,7 @@ const messageSchema = new Schema(
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     recipientId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     body: { type: String, required: true, trim: true, maxlength: 4000 },
+    replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
     readAt: { type: Date, default: null, index: true }
   },
   { timestamps: true }
@@ -114,6 +115,7 @@ function serializeMessage(m) {
     senderId: m.senderId.toString(),
     recipientId: m.recipientId.toString(),
     body: m.body,
+    replyTo: m.replyTo ? m.replyTo.toString() : null,
     createdAt: m.createdAt,
     readAt: m.readAt || null
   };
@@ -316,11 +318,19 @@ io.on("connection", (socket) => {
       }
 
       const recipientId = participants.find((id) => id !== socket.userId);
+      let replyTo = null;
+      if (payload?.replyTo) {
+        if (!isValidId(payload.replyTo)) return respond({ error: "Invalid reply target." });
+        const original = await Message.findOne({ _id: payload.replyTo, conversationId: conversation._id });
+        if (!original) return respond({ error: "The message you are replying to no longer exists." });
+        replyTo = original._id;
+      }
       const message = await Message.create({
         conversationId: conversation._id,
         senderId: socket.userId,
         recipientId,
-        body
+        body,
+        replyTo
       });
       const serialized = serializeMessage(message);
 
