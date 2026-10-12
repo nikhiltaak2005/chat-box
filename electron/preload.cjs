@@ -20,5 +20,14 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("chat:visibility", listener);
     return () => ipcRenderer.removeListener("chat:visibility", listener);
   },
+  checkForUpdates: () => ipcRenderer.invoke("updater:check"),
+  downloadUpdate: () => ipcRenderer.invoke("updater:download"),
+  installUpdate: () => ipcRenderer.invoke("updater:install"),
+  getUpdateStatus: () => ipcRenderer.invoke("updater:get-status"),
+  onUpdateStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("updater:status", listener);
+    return () => ipcRenderer.removeListener("updater:status", listener);
+  },
   platform: () => ipcRenderer.invoke("app:platform")
 });
