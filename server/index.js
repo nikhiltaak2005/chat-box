@@ -259,10 +259,19 @@ function requireAdmin(req, res, next) {
   }).catch(next);
 }
 
+app.get("/api/users/search", requireAuth, async (req, res, next) => {
+  try {
+    const username = String(req.query?.username || "").trim().toLowerCase();
+    if (username.length < 3) return res.json({ users: [] });
+    const users = await User.find({ username: { $regex: "^" + username.replace(/[.*+?^${}()|[\]\\]/g, "\\app.get("/api/friends", requireAuth, async (req, res, next) => {") }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").limit(20);
+    return res.json({ users: users.map(publicContact) });
+  } catch (err) { return next(err); }
+});
+
 app.get("/api/friends", requireAuth, async (req, res, next) => {
   try {
     const requests = await FriendRequest.find({ $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).sort({ createdAt: -1 }).limit(200);
-    const ids = [...new Set(requests.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString())];
+    const ids = [...new Set(requests.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()))];
     const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData");
     const map = new Map(users.map(u => [u._id.toString(), publicContact(u)]));
     return res.json({ requests: requests.map(r => ({ id: r._id.toString(), senderId: r.senderId.toString(), recipientId: r.recipientId.toString(), status: r.status, createdAt: r.createdAt, person: map.get((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()) })).filter(r => r.person) });
@@ -332,9 +341,9 @@ app.delete("/api/admin/storage/expired", requireAuth, requireAdmin, async (_req,
 
 app.get("/api/users", requireAuth, async (req, res, next) => {
   try {
-    const users = await User.find({ _id: { $ne: req.userId } })
-      .select("username displayName avatarData")
-      .sort({ username: 1 });
+    const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).select("senderId recipientId");
+    const ids = accepted.map(r => r.senderId.toString() === req.userId ? r.recipientId : r.senderId);
+    const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData").sort({ username: 1 });
     return res.json({ users: users.map(publicContact) });
   } catch (err) {
     return next(err);
