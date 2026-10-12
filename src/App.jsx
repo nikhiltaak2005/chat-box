@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2 } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -43,6 +43,9 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [autoDeleteSeconds, setAutoDeleteSeconds] = useState(0);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState({ status: "idle", message: "Check for updates", version: "", percent: 0 });
+  const [updateBusy, setUpdateBusy] = useState(false);
   const socketRef = useRef(null);
   const bottomRef = useRef(null);
   const activeRef = useRef(active);
@@ -53,6 +56,11 @@ export default function App() {
   useEffect(() => { visibleRef.current = chatVisible; }, [chatVisible]);
 
   useEffect(() => { window.desktop?.setAlwaysOnTop(true); }, []);
+  useEffect(() => {
+    if (!window.desktop?.getUpdateStatus) return;
+    window.desktop.getUpdateStatus().then(setUpdateInfo).catch(() => {});
+    return window.desktop.onUpdateStatus?.(setUpdateInfo);
+  }, []);
   useEffect(() => {
     if (!window.desktop?.onChatVisibility) return;
     return window.desktop.onChatVisibility(setChatVisible);
@@ -178,6 +186,25 @@ export default function App() {
       setMessages(data.messages || []); setReplyTo(null);
     } catch (e) { setError(e.message); }
   }
+  async function runUpdateAction() {
+    if (!window.desktop) { setUpdateInfo({ status: "dev", message: "Updates are available in the installed Windows app." }); return; }
+    setUpdateBusy(true);
+    try {
+      let next;
+      if (updateInfo.status === "downloaded") {
+        await window.desktop.installUpdate();
+        return;
+      } else if (updateInfo.status === "available") {
+        next = await window.desktop.downloadUpdate();
+      } else {
+        next = await window.desktop.checkForUpdates();
+      }
+      if (next) setUpdateInfo(next);
+    } catch (e) {
+      setUpdateInfo({ status: "error", message: e.message || "Update action failed" });
+    } finally { setUpdateBusy(false); }
+  }
+
   async function saveChatSettings(e) {
     e.preventDefault(); if (!active) return;
     setSettingsSaving(true); setError("");
@@ -204,6 +231,7 @@ export default function App() {
       <div className="brand-mark"><MessageCircle size={16} /></div>
       <div className="brand-title">pocket<span>chat</span><small>{me ? status : "PERSONAL MESSENGER"}</small></div>
       <div className="drag-space" />
+      <button className="icon-btn" title="Software updates" onClick={()=>setUpdateOpen(true)}><Download size={14}/></button>
       <button className={`icon-btn pin ${alwaysOnTop ? "selected" : ""}`} title="Toggle always on top" onClick={() => { const n = !alwaysOnTop; setAlwaysOnTop(n); window.desktop?.setAlwaysOnTop(n); }}><Pin size={14}/></button>
       <button className="icon-btn" title="Minimize" onClick={() => window.desktop?.minimize()}><Minus size={16}/></button>
       <button className="icon-btn close" title="Hide window" onClick={() => window.desktop?.hide()}><X size={16}/></button>
@@ -252,6 +280,7 @@ export default function App() {
         <div className="footer-note"><Circle size={7} fill="currentColor"/> PRIVATE SPACE · REAL-TIME CHAT</div>
       </section>}
     </>}
+    {updateOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setUpdateOpen(false);}}><section className="profile-dialog"><div className="profile-heading"><div><p className="eyebrow">POCKETCHAT</p><h2>Software updates</h2></div><button type="button" className="icon-btn" onClick={()=>setUpdateOpen(false)}><X size={17}/></button></div><div className="update-status-icon">{updateInfo.status==="current" ? <CheckCircle2 size={28}/> : updateInfo.status==="downloaded" ? <CheckCircle2 size={28}/> : <Download size={28}/>}</div><strong className="update-status-title">{updateInfo.message || "Check for updates"}</strong>{updateInfo.version && <p className="muted">Version {updateInfo.version}</p>}{updateInfo.status==="downloading" && <div className="update-progress"><span style={{width:`${updateInfo.percent || 0}%`}}/></div>}{updateInfo.status==="error" && <p className="error-text">Please check your internet connection and try again.</p>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setUpdateOpen(false)}>Close</button><button type="button" className="primary-btn" disabled={updateBusy || ["checking","downloading","current","dev"].includes(updateInfo.status)} onClick={runUpdateAction}>{updateBusy ? "Please wait…" : updateInfo.status==="downloaded" ? "Install and restart" : updateInfo.status==="available" ? "Download update" : updateInfo.status==="downloading" ? "Downloading…" : updateInfo.status==="current" ? "Up to date" : updateInfo.status==="dev" ? "Installed app only" : "Check for updates"}</button></div>{updateInfo.status==="current" && <button type="button" className="text-btn" onClick={runUpdateAction}>Check again</button>}{updateInfo.status==="dev" && <p className="muted">The update service works in the installed app, not in the development window.</p>}</section></div>}
     {settingsOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSettingsOpen(false);}}><form className="profile-dialog" onSubmit={saveChatSettings}><div className="profile-heading"><div><p className="eyebrow">SNAPCHAT-STYLE</p><h2>Disappearing messages</h2></div><button type="button" className="icon-btn" onClick={()=>setSettingsOpen(false)}><X size={17}/></button></div><label>Delete messages<select className="setting-select" value={autoDeleteSeconds} onChange={e=>setAutoDeleteSeconds(Number(e.target.value))}><option value={0}>Off — keep messages</option><option value={-1}>Immediately after seen</option><option value={5}>5 seconds after seen</option><option value={60}>1 minute after seen</option><option value={3600}>1 hour after seen</option><option value={86400}>24 hours after seen</option></select></label><p className="muted">The timer starts only after the recipient opens this conversation and the message is marked seen. If their chat is minimized or hidden, it stays unread. This setting applies to this conversation on both sides.</p><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setSettingsOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={settingsSaving}>{settingsSaving ? "Saving…" : "Save settings"}</button></div></form></div>}
     {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;

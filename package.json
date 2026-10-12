@@ -1,6 +1,6 @@
 {
   "name": "personal-messenger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Floating Windows person-to-person messenger",
   "main": "electron/main.cjs",
@@ -25,13 +25,35 @@
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "electron-updater": "^6.6.2"
   },
   "build": {
     "appId": "in.nnevolution.personal-messenger",
     "productName": "Personal Messenger",
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "win": { "target": "nsis" },
-    "directories": { "output": "release" }
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "nikhiltaak2005",
+        "repo": "chat-box",
+        "releaseType": "release"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }
