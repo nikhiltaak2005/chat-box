@@ -1,0 +1,46 @@
+name: Build and publish Windows updater release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example 0.2.1)"
+        required: true
+        default: "0.2.1"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Set version
+        shell: pwsh
+        run: |
+          npm version "${{ inputs.version }}" --no-git-tag-version --allow-same-version
+      - name: Install dependencies
+        run: npm install
+      - name: Build Windows installer and updater metadata
+        env:
+          VITE_API_URL: https://personal-messenger-api.onrender.com
+        run: npm run package:win -- --config.win.signAndEditExecutable=false --publish never
+      - name: Publish GitHub Release for in-app updater
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: PocketChat v${{ inputs.version }}
+          target_commitish: main
+          generate_release_notes: true
+          files: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
