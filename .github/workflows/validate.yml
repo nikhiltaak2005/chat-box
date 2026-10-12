@@ -1,0 +1,25 @@
+name: Validate PocketChat
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm install
+      - name: Build web UI
+        env:
+          VITE_API_URL: https://personal-messenger-api.onrender.com
+        run: npm run build:ui
+      - name: Check backend syntax
+        run: node --check server/index.js
