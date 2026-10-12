@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -34,6 +34,12 @@ export default function App() {
   const [alwaysOnTop, setAlwaysOnTop] = useState(true);
   const [error, setError] = useState("");
   const [chatVisible, setChatVisible] = useState(!window.desktop);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileName, setProfileName] = useState(me?.displayName || "");
+  const [profileUsername, setProfileUsername] = useState(me?.username || "");
+  const [profileAvatar, setProfileAvatar] = useState(me?.avatarData || "");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [replyTo, setReplyTo] = useState(null);
   const socketRef = useRef(null);
   const bottomRef = useRef(null);
   const activeRef = useRef(active);
@@ -125,6 +131,25 @@ export default function App() {
     });
   }, [token, me, active?.conversationId, chatVisible, messages, status]);
 
+  function startProfileEdit() {
+    setProfileName(me?.displayName || ""); setProfileUsername(me?.username || ""); setProfileAvatar(me?.avatarData || ""); setError(""); setProfileOpen(true);
+  }
+  async function saveProfile(e) {
+    e.preventDefault(); setProfileSaving(true); setError("");
+    try {
+      const data = await request("/api/profile", token, { method: "PATCH", body: JSON.stringify({ displayName: profileName, username: profileUsername, avatarData: profileAvatar }) });
+      localStorage.setItem(userKey, JSON.stringify(data.user)); setMe(data.user);
+      setContacts(prev => prev.map(person => person._id === data.user.id ? { ...person, username: data.user.username, displayName: data.user.displayName, avatarData: data.user.avatarData } : person));
+      setProfileOpen(false);
+    } catch (e) { setError(e.message); } finally { setProfileSaving(false); }
+  }
+  function handleAvatarFile(e) {
+    const file = e.target.files?.[0]; if (!file) return;
+    if (!file.type.startsWith("image/")) { setError("Please choose an image file."); return; }
+    if (file.size > 1024 * 1024) { setError("Profile photo must be under 1 MB."); return; }
+    const reader = new FileReader(); reader.onload = () => setProfileAvatar(String(reader.result || "")); reader.onerror = () => setError("Could not read this image."); reader.readAsDataURL(file);
+  }
+
   async function submitAuth(e) {
     e.preventDefault(); setAuthError("");
     try {
@@ -143,15 +168,16 @@ export default function App() {
       const data = await request(`/api/conversations/${person._id}`, token);
       readRequestRef.current = "";
       setActive({ ...person, conversationId: data.conversation._id });
-      setMessages(data.messages || []);
+      setMessages(data.messages || []); setReplyTo(null);
     } catch (e) { setError(e.message); }
   }
   async function sendMessage(e) {
     e?.preventDefault();
     const body = draft.trim();
     if (!body || !active) return;
-    setDraft("");
-    socketRef.current?.emit("message:send", { conversationId: active.conversationId, body }, result => {
+    const replyMessageId = replyTo?._id || null;
+    setDraft(""); setReplyTo(null);
+    socketRef.current?.emit("message:send", { conversationId: active.conversationId, body, replyTo: replyMessageId }, result => {
       if (result?.error) { setError(result.error); setDraft(body); }
     });
   }
@@ -185,29 +211,30 @@ export default function App() {
       {active ? <section className="chat-view">
         <div className="chat-header">
           <button className="icon-btn back" onClick={()=>setActive(null)}><ArrowLeft size={17}/></button>
-          <div className="avatar">{(active.displayName || active.username).slice(0,1).toUpperCase()}</div>
+          <div className="avatar">{active.avatarData ? <img src={active.avatarData} alt=""/> : (active.displayName || active.username).slice(0,1).toUpperCase()}</div>
           <div className="contact-meta"><strong>{active.displayName || active.username}</strong><small>@{active.username}</small></div>
           <div className="online-dot" title={status}/>
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || `${m.createdAt}-${i}`} className={`message ${m.senderId===me.id ? "mine" : "theirs"}`}><div className="bubble">{m.body}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button></div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
-        <form className="composer" onSubmit={sendMessage}><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Write a message…" maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
+        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}<form className="composer" onSubmit={sendMessage}><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
       </section> : <section className="contacts-view">
         <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
-        <div className="me-card"><div className="avatar own"><UserRound size={17}/></div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">YOU</span></div>
+        <button className="me-card profile-button" onClick={startProfileEdit} title="Edit your profile"><div className="avatar own">{me.avatarData ? <img src={me.avatarData} alt=""/> : <UserRound size={17}/>}</div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">EDIT PROFILE</span><UserCog size={15}/></button>
         <div className="searchbox"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Find a person…"/></div>
         <div className="section-label">PEOPLE <span>{filtered.length}</span></div>
         <div className="contact-list">
-          {filtered.map(c=><button key={c._id} className="contact-row" onClick={()=>openChat(c)}><div className="avatar">{(c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username}</small></div><Plus size={15} className="open-arrow"/></button>)}
+          {filtered.map(c=><button key={c._id} className="contact-row" onClick={()=>openChat(c)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username}</small></div><Plus size={15} className="open-arrow"/></button>)}
           {filtered.length===0 && <div className="empty-people"><UserRound size={22}/><strong>No people yet</strong><span>Create another account on a second device/server to start a conversation.</span></div>}
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
         <div className="footer-note"><Circle size={7} fill="currentColor"/> PRIVATE SPACE · REAL-TIME CHAT</div>
       </section>}
     </>}
+    {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;
 }
