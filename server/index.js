@@ -44,6 +44,7 @@ const userSchema = new Schema(
   {
     username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24 },
     displayName: { type: String, trim: true, maxlength: 40, default: "" },
+    avatarData: { type: String, default: "", maxlength: 1500000 },
     passwordHash: { type: String, required: true }
   },
   { timestamps: true }
@@ -63,6 +64,7 @@ const messageSchema = new Schema(
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     recipientId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     body: { type: String, required: true, trim: true, maxlength: 4000 },
+    replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
     readAt: { type: Date, default: null, index: true }
   },
   { timestamps: true }
@@ -90,12 +92,12 @@ function verifyToken(token) {
 
 // Shape returned to the client on login/register (client reads user.id).
 function publicSelf(user) {
-  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "" };
+  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "" };
 }
 
 // Shape returned by /api/users (client reads contact._id).
 function publicContact(user) {
-  return { _id: user._id.toString(), username: user.username, displayName: user.displayName || "" };
+  return { _id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "" };
 }
 
 function conversationKey(a, b) {
@@ -113,6 +115,7 @@ function serializeMessage(m) {
     senderId: m.senderId.toString(),
     recipientId: m.recipientId.toString(),
     body: m.body,
+    replyTo: m.replyTo ? m.replyTo.toString() : null,
     createdAt: m.createdAt,
     readAt: m.readAt || null
   };
@@ -144,7 +147,7 @@ async function findOrCreateConversation(a, b) {
 // ---------------------------------------------------------------------------
 const app = express();
 app.use(cors({ origin: corsOrigin }));
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, db: mongoose.connection.readyState === 1 ? "connected" : "disconnected" });
@@ -205,10 +208,36 @@ app.post("/api/auth/login", async (req, res, next) => {
   }
 });
 
+app.patch("/api/profile", requireAuth, async (req, res, next) => {
+  try {
+    const displayName = String(req.body?.displayName || "").trim().slice(0, 40);
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const avatarData = String(req.body?.avatarData || "");
+    if (!/^[a-z0-9_]{3,24}$/.test(username)) {
+      return res.status(400).json({ error: "Username must be 3-24 characters (letters, numbers, underscore)." });
+    }
+    if (avatarData && (!/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatarData) || avatarData.length > 1000000)) {
+      return res.status(400).json({ error: "Choose an image under about 700 KB (PNG, JPG, WEBP or GIF)." });
+    }
+    const duplicate = await User.findOne({ username, _id: { $ne: req.userId } });
+    if (duplicate) return res.status(409).json({ error: "That username is already taken." });
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      { $set: { username, displayName, avatarData } },
+      { new: true, runValidators: true }
+    );
+    if (!user) return res.status(404).json({ error: "User not found." });
+    return res.json({ user: publicSelf(user) });
+  } catch (err) {
+    if (err?.code === 11000) return res.status(409).json({ error: "That username is already taken." });
+    return next(err);
+  }
+});
+
 app.get("/api/users", requireAuth, async (req, res, next) => {
   try {
     const users = await User.find({ _id: { $ne: req.userId } })
-      .select("username displayName")
+      .select("username displayName avatarData")
       .sort({ username: 1 });
     return res.json({ users: users.map(publicContact) });
   } catch (err) {
@@ -289,11 +318,19 @@ io.on("connection", (socket) => {
       }
 
       const recipientId = participants.find((id) => id !== socket.userId);
+      let replyTo = null;
+      if (payload?.replyTo) {
+        if (!isValidId(payload.replyTo)) return respond({ error: "Invalid reply target." });
+        const original = await Message.findOne({ _id: payload.replyTo, conversationId: conversation._id });
+        if (!original) return respond({ error: "The message you are replying to no longer exists." });
+        replyTo = original._id;
+      }
       const message = await Message.create({
         conversationId: conversation._id,
         senderId: socket.userId,
         recipientId,
-        body
+        body,
+        replyTo
       });
       const serialized = serializeMessage(message);
 
