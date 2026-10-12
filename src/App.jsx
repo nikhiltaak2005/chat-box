@@ -74,8 +74,22 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !me) return;
-    request("/api/users", token).then(d => setContacts(d.users || [])).catch(e => setError(e.message));
-    request("/api/friends", token).then(d => setFriendRequests(d.requests || [])).catch(e => setError(e.message));
+    const refreshPeople = async () => {
+      try {
+        const [people, friends] = await Promise.all([
+          request("/api/users", token),
+          request("/api/friends", token)
+        ]);
+        setContacts(people.users || []);
+        setFriendRequests(friends.requests || []);
+      } catch (e) {
+        setError(e.message);
+      }
+    };
+    refreshPeople();
+    // Keep incoming friend requests and accepted friends in sync even when
+    // the other person sends a request while this window is already open.
+    const peopleRefresh = setInterval(refreshPeople, 5000);
     const socket = io(API, {
       auth: { token },
       // Start with polling because some hosting proxies reject WebSocket upgrades.
@@ -134,6 +148,7 @@ export default function App() {
       setMessages(prev => prev.filter(message => !ids.has(message._id)));
     });
     return () => {
+      clearInterval(peopleRefresh);
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
@@ -317,10 +332,11 @@ export default function App() {
         <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Admin panel" onClick={openAdmin}>A</button><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
         <button className="me-card profile-button" onClick={startProfileEdit} title="Edit your profile"><div className="avatar own">{me.avatarData ? <img src={me.avatarData} alt=""/> : <UserRound size={17}/>}</div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">EDIT PROFILE</span><UserCog size={15}/></button>
         <form className="searchbox" onSubmit={sendFriendRequest}><Search size={15}/><input value={friendUsername} onChange={e=>setFriendUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="Add by exact username…" minLength={3} maxLength={24}/><button className="icon-btn" type="submit" title="Send friend request"><Plus size={15}/></button></form>
-        {friendRequests.some(r=>r.status==="pending" && r.recipientId===me.id) && <><div className="section-label">FRIEND REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).length}</span></div><div className="contact-list" style={{maxHeight:130,flex:"initial"}}>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username}</small></div><button className="primary-btn" onClick={()=>answerFriendRequest(r.id,"accept")}>Accept</button><button className="icon-btn" onClick={()=>answerFriendRequest(r.id,"reject")} title="Reject">×</button></div>)}</div></>}
+        {friendRequests.some(r=>r.status==="pending" && r.recipientId===me.id) && <><div className="section-label">INCOMING REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).length}</span></div><div className="contact-list request-list">{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username} wants to connect</small></div><button className="primary-btn" onClick={()=>answerFriendRequest(r.id,"accept")}>Accept</button><button className="icon-btn" onClick={()=>answerFriendRequest(r.id,"reject")} title="Reject request">×</button></div>)}</div></>}
+        {friendRequests.some(r=>r.status==="pending" && r.senderId===me.id) && <><div className="section-label">SENT REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.senderId===me.id).length}</span></div><div className="contact-list request-list">{friendRequests.filter(r=>r.status==="pending" && r.senderId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username} · Waiting for acceptance</small></div><span className="request-pending">Pending</span></div>)}</div></>}
         <div className="section-label">PEOPLE <span>{filtered.length}</span></div>
         <div className="contact-list">
-          {filtered.map(c=><button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? "Friend — chat" : "Click to add friend"}</small></div><Plus size={15} className="open-arrow"/></button>)}
+          {filtered.map(c=>{const pending=friendRequests.find(r=>r.status==="pending" && ((r.senderId===me.id && r.person.username===c.username)||(r.recipientId===me.id && r.person.username===c.username)));return <button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : pending ? (pending.recipientId===me.id ? answerFriendRequest(pending.id,"accept") : setError("Friend request already sent. Waiting for @"+c.username+" to accept.")) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? "Friend — open chat" : pending ? (pending.recipientId===me.id ? "Accept incoming request" : "Request sent · waiting") : "Add friend"}</small></div>{c.isFriend ? <MessageCircle size={15} className="open-arrow"/> : pending ? <span className="request-pending">{pending.recipientId===me.id ? "Accept" : "Sent"}</span> : <Plus size={15} className="open-arrow"/>}</button>})}
           {filtered.length===0 && <div className="empty-people"><UserRound size={22}/><strong>No people yet</strong><span>Create another account on a second device/server to start a conversation.</span></div>}
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
