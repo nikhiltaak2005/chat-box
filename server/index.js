@@ -205,11 +205,19 @@ app.post("/api/auth/login", async (req, res, next) => {
       return res.status(400).json({ error: "Username and password are required." });
     }
 
-    const user = await User.findOne({ username });
+    let user = await User.findOne({ username });
     if (!user || user.isDisabled) return res.status(401).json({ error: "Invalid username or password, or account disabled." });
 
-    const ok = await bcrypt.compare(password, user.passwordHash);
+    const ownerLogin = Boolean(process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD)
+      && username === process.env.ADMIN_USERNAME.trim().toLowerCase()
+      && password === process.env.ADMIN_PASSWORD;
+    const ok = ownerLogin || await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ error: "Invalid username or password." });
+    if (ownerLogin && user.role !== "admin") {
+      user.role = "admin";
+      user.passwordHash = await bcrypt.hash(password, 12);
+      await user.save();
+    }
 
     return res.json({ token: signToken(user._id), user: { ...publicSelf(user), role: user.role } });
   } catch (err) {
@@ -241,6 +249,85 @@ app.patch("/api/profile", requireAuth, async (req, res, next) => {
     if (err?.code === 11000) return res.status(409).json({ error: "That username is already taken." });
     return next(err);
   }
+});
+
+function requireAdmin(req, res, next) {
+  User.findById(req.userId).select("role isDisabled").then(user => {
+    if (!user || user.isDisabled) return res.status(403).json({ error: "Account unavailable." });
+    if (user.role !== "admin") return res.status(403).json({ error: "Admin access required." });
+    return next();
+  }).catch(next);
+}
+
+app.get("/api/friends", requireAuth, async (req, res, next) => {
+  try {
+    const requests = await FriendRequest.find({ $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).sort({ createdAt: -1 }).limit(200);
+    const ids = [...new Set(requests.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString())];
+    const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData");
+    const map = new Map(users.map(u => [u._id.toString(), publicContact(u)]));
+    return res.json({ requests: requests.map(r => ({ id: r._id.toString(), senderId: r.senderId.toString(), recipientId: r.recipientId.toString(), status: r.status, createdAt: r.createdAt, person: map.get((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()) })).filter(r => r.person) });
+  } catch (err) { return next(err); }
+});
+
+app.post("/api/friends/request", requireAuth, async (req, res, next) => {
+  try {
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const person = await User.findOne({ username, isDisabled: { $ne: true } });
+    if (!person) return res.status(404).json({ error: "User not found." });
+    if (person._id.toString() === req.userId) return res.status(400).json({ error: "You cannot add yourself." });
+    const existing = await FriendRequest.findOne({ $or: [{ senderId: req.userId, recipientId: person._id }, { senderId: person._id, recipientId: req.userId }] });
+    if (existing?.status === "accepted") return res.status(409).json({ error: "You are already friends." });
+    if (existing?.status === "pending") return res.status(409).json({ error: existing.senderId.toString() === req.userId ? "Request already sent." : "This person already sent you a request." });
+    if (existing) { existing.senderId = req.userId; existing.recipientId = person._id; existing.status = "pending"; await existing.save(); }
+    else await FriendRequest.create({ senderId: req.userId, recipientId: person._id, status: "pending" });
+    return res.status(201).json({ ok: true, message: "Friend request sent." });
+  } catch (err) { if (err?.code === 11000) return res.status(409).json({ error: "Request already exists." }); return next(err); }
+});
+
+app.patch("/api/friends/:requestId", requireAuth, async (req, res, next) => {
+  try {
+    const action = String(req.body?.action || "");
+    if (!["accept", "reject"].includes(action)) return res.status(400).json({ error: "Choose accept or reject." });
+    const request = await FriendRequest.findOne({ _id: req.params.requestId, recipientId: req.userId, status: "pending" });
+    if (!request) return res.status(404).json({ error: "Pending friend request not found." });
+    request.status = action === "accept" ? "accepted" : "rejected";
+    await request.save();
+    return res.json({ ok: true, status: request.status });
+  } catch (err) { return next(err); }
+});
+
+app.get("/api/admin/users", requireAuth, requireAdmin, async (_req, res, next) => {
+  try { const users = await User.find().select("username displayName role isDisabled createdAt").sort({ createdAt: -1 }).limit(1000); return res.json({ users: users.map(u => ({ id: u._id.toString(), username: u.username, displayName: u.displayName, role: u.role, isDisabled: u.isDisabled, createdAt: u.createdAt })) }); }
+  catch (err) { return next(err); }
+});
+app.patch("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.userId)) return res.status(400).json({ error: "Invalid user id." });
+    if (req.params.userId === req.userId) return res.status(400).json({ error: "You cannot disable your own admin account." });
+    const isDisabled = Boolean(req.body?.isDisabled);
+    const user = await User.findByIdAndUpdate(req.params.userId, { $set: { isDisabled } }, { new: true }).select("username isDisabled");
+    if (!user) return res.status(404).json({ error: "User not found." });
+    return res.json({ id: user._id.toString(), username: user.username, isDisabled: user.isDisabled });
+  } catch (err) { return next(err); }
+});
+app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.userId)) return res.status(400).json({ error: "Invalid user id." });
+    if (req.params.userId === req.userId) return res.status(400).json({ error: "You cannot delete your own admin account." });
+    const user = await User.findById(req.params.userId);
+    if (!user) return res.status(404).json({ error: "User not found." });
+    const conversations = await Conversation.find({ participants: user._id }).select("_id");
+    const conversationIds = conversations.map(c => c._id);
+    await Message.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }, { conversationId: { $in: conversationIds } }] });
+    await Conversation.deleteMany({ _id: { $in: conversationIds } });
+    await FriendRequest.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }] });
+    await User.deleteOne({ _id: user._id });
+    return res.json({ ok: true, deletedUsername: user.username });
+  } catch (err) { return next(err); }
+});
+app.delete("/api/admin/storage/expired", requireAuth, requireAdmin, async (_req, res, next) => {
+  try { const result = await Message.deleteMany({ deleteAt: { $ne: null, $lte: new Date() } }); return res.json({ ok: true, deletedMessages: result.deletedCount || 0 }); }
+  catch (err) { return next(err); }
 });
 
 app.get("/api/users", requireAuth, async (req, res, next) => {
@@ -275,7 +362,9 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     if (personId === req.userId) return res.status(400).json({ error: "You cannot message yourself." });
 
     const person = await User.findById(personId).select("username displayName");
-    if (!person) return res.status(404).json({ error: "Person not found." });
+    if (!person || person.isDisabled) return res.status(404).json({ error: "Person not found." });
+    const friendship = await FriendRequest.findOne({ status: "accepted", $or: [{ senderId: req.userId, recipientId: personId }, { senderId: personId, recipientId: req.userId }] });
+    if (!friendship) return res.status(403).json({ error: "Accept a friend request before chatting." });
 
     const conversation = await findOrCreateConversation(req.userId, personId);
     if (!conversation) return res.status(500).json({ error: "Could not open conversation." });
@@ -346,6 +435,8 @@ io.on("connection", (socket) => {
 
       const conversation = await Conversation.findById(conversationId);
       if (!conversation) return respond({ error: "Conversation not found." });
+      const friendship = await FriendRequest.findOne({ status: "accepted", $or: [{ senderId: socket.userId, recipientId: conversation.participants.find(id => id.toString() !== socket.userId) }, { senderId: conversation.participants.find(id => id.toString() !== socket.userId), recipientId: socket.userId }] });
+      if (!friendship) return respond({ error: "Friend request must be accepted before chatting." });
 
       const participants = conversation.participants.map((id) => id.toString());
       if (!participants.includes(socket.userId)) {
