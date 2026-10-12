@@ -268,11 +268,6 @@ app.get("/api/users/search", requireAuth, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
-app.get("/api/friends", requireAuth, async (req, res, next) => {") }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").limit(20);
-    return res.json({ users: users.map(publicContact) });
-  } catch (err) { return next(err); }
-});
-
 app.get("/api/friends", requireAuth, async (req, res, next) => {
   try {
     const requests = await FriendRequest.find({ $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).sort({ createdAt: -1 }).limit(200);
