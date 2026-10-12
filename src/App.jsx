@@ -27,6 +27,9 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [query, setQuery] = useState("");
   const [contacts, setContacts] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
+  const [friendUsername, setFriendUsername] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [active, setActive] = useState(null);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
@@ -70,6 +73,7 @@ export default function App() {
   useEffect(() => {
     if (!token || !me) return;
     request("/api/users", token).then(d => setContacts(d.users || [])).catch(e => setError(e.message));
+    request("/api/friends", token).then(d => setFriendRequests(d.requests || [])).catch(e => setError(e.message));
     const socket = io(API, {
       auth: { token },
       // Start with polling because some hosting proxies reject WebSocket upgrades.
@@ -144,6 +148,20 @@ export default function App() {
       if (result?.error) console.error("[Socket] Could not mark messages read:", result.error);
     });
   }, [token, me, active?.conversationId, chatVisible, messages, status]);
+
+  async function sendFriendRequest(e) {
+    e.preventDefault(); setError("");
+    try { await request("/api/friends/request", token, { method: "POST", body: JSON.stringify({ username: friendUsername }) }); setFriendUsername(""); setError("Friend request sent."); }
+    catch (e) { setError(e.message); }
+  }
+  async function answerFriendRequest(id, action) {
+    setError("");
+    try {
+      await request("/api/friends/" + id, token, { method: "PATCH", body: JSON.stringify({ action }) });
+      const data = await request("/api/friends", token); setFriendRequests(data.requests || []);
+      const friends = await request("/api/users", token); setContacts(friends.users || []);
+    } catch (e) { setError(e.message); }
+  }
 
   function startProfileEdit() {
     setProfileName(me?.displayName || ""); setProfileUsername(me?.username || ""); setProfileAvatar(me?.avatarData || ""); setError(""); setProfileOpen(true);
@@ -266,11 +284,12 @@ export default function App() {
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
-        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}<form className="composer" onSubmit={sendMessage}><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
+        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-strip">{["😀","😂","🥹","😍","😘","👍","❤️","🔥","🎉","😭","🙏","✨","😎","💯","👋","🤝"].map(emoji=><button type="button" key={emoji} onClick={()=>setDraft(d=>d+emoji)}>{emoji}</button>)}</div>}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
       </section> : <section className="contacts-view">
         <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
         <button className="me-card profile-button" onClick={startProfileEdit} title="Edit your profile"><div className="avatar own">{me.avatarData ? <img src={me.avatarData} alt=""/> : <UserRound size={17}/>}</div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">EDIT PROFILE</span><UserCog size={15}/></button>
-        <div className="searchbox"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Find a person…"/></div>
+        <form className="searchbox" onSubmit={sendFriendRequest}><Search size={15}/><input value={friendUsername} onChange={e=>setFriendUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="Add by exact username…" minLength={3} maxLength={24}/><button className="icon-btn" type="submit" title="Send friend request"><Plus size={15}/></button></form>
+        {friendRequests.some(r=>r.status==="pending" && r.recipientId===me.id) && <><div className="section-label">FRIEND REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).length}</span></div><div className="contact-list" style={{maxHeight:130,flex:"initial"}}>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username}</small></div><button className="primary-btn" onClick={()=>answerFriendRequest(r.id,"accept")}>Accept</button><button className="icon-btn" onClick={()=>answerFriendRequest(r.id,"reject")} title="Reject">×</button></div>)}</div></>}
         <div className="section-label">PEOPLE <span>{filtered.length}</span></div>
         <div className="contact-list">
           {filtered.map(c=><button key={c._id} className="contact-row" onClick={()=>openChat(c)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username}</small></div><Plus size={15} className="open-arrow"/></button>)}
