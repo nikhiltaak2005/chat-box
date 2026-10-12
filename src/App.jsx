@@ -166,10 +166,21 @@ export default function App() {
     catch (e) { setError(e.message); }
   }
 
+  async function requestFriendForPerson(targetUsername) {
+    setError("");
+    try {
+      await request("/api/friends/request", token, { method: "POST", body: JSON.stringify({ username: targetUsername }) });
+      const data = await request("/api/friends", token);
+      setFriendRequests(data.requests || []);
+      setError("Friend request sent to @" + targetUsername + ".");
+    } catch (e) { setError(e.message); }
+  }
   async function sendFriendRequest(e) {
-    e.preventDefault(); setError("");
-    try { await request("/api/friends/request", token, { method: "POST", body: JSON.stringify({ username: friendUsername }) }); setFriendUsername(""); setError("Friend request sent."); }
-    catch (e) { setError(e.message); }
+    e.preventDefault();
+    const targetUsername = friendUsername.trim();
+    if (!targetUsername) return;
+    await requestFriendForPerson(targetUsername);
+    setFriendUsername("");
   }
   async function answerFriendRequest(id, action) {
     setError("");
@@ -303,13 +314,13 @@ export default function App() {
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
         {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-strip">{["😀","😂","🥹","😍","😘","👍","❤️","🔥","🎉","😭","🙏","✨","😎","💯","👋","🤝"].map(emoji=><button type="button" key={emoji} onClick={()=>setDraft(d=>d+emoji)}>{emoji}</button>)}</div>}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
       </section> : <section className="contacts-view">
-        <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div>{me.role === "admin" && <button className="icon-btn logout" title="Admin panel" onClick={openAdmin}>A</button>}<button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
+        <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Admin panel" onClick={openAdmin}>A</button><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
         <button className="me-card profile-button" onClick={startProfileEdit} title="Edit your profile"><div className="avatar own">{me.avatarData ? <img src={me.avatarData} alt=""/> : <UserRound size={17}/>}</div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">EDIT PROFILE</span><UserCog size={15}/></button>
         <form className="searchbox" onSubmit={sendFriendRequest}><Search size={15}/><input value={friendUsername} onChange={e=>setFriendUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="Add by exact username…" minLength={3} maxLength={24}/><button className="icon-btn" type="submit" title="Send friend request"><Plus size={15}/></button></form>
         {friendRequests.some(r=>r.status==="pending" && r.recipientId===me.id) && <><div className="section-label">FRIEND REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).length}</span></div><div className="contact-list" style={{maxHeight:130,flex:"initial"}}>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username}</small></div><button className="primary-btn" onClick={()=>answerFriendRequest(r.id,"accept")}>Accept</button><button className="icon-btn" onClick={()=>answerFriendRequest(r.id,"reject")} title="Reject">×</button></div>)}</div></>}
         <div className="section-label">PEOPLE <span>{filtered.length}</span></div>
         <div className="contact-list">
-          {filtered.map(c=><button key={c._id} className="contact-row" onClick={()=>openChat(c)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username}</small></div><Plus size={15} className="open-arrow"/></button>)}
+          {filtered.map(c=><button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? "Friend — chat" : "Click to add friend"}</small></div><Plus size={15} className="open-arrow"/></button>)}
           {filtered.length===0 && <div className="empty-people"><UserRound size={22}/><strong>No people yet</strong><span>Create another account on a second device/server to start a conversation.</span></div>}
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}

@@ -100,7 +100,7 @@ function verifyToken(token) {
 
 // Shape returned to the client on login/register (client reads user.id).
 function publicSelf(user) {
-  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "" };
+  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "", role: user.role || "user" };
 }
 
 // Shape returned by /api/users (client reads contact._id).
@@ -341,10 +341,12 @@ app.delete("/api/admin/storage/expired", requireAuth, requireAdmin, async (_req,
 
 app.get("/api/users", requireAuth, async (req, res, next) => {
   try {
+    // Keep the directory visible to signed-in users. Only accepted friends can open chats;
+    // the UI uses isFriend to offer a friend request for everyone else.
     const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).select("senderId recipientId");
-    const ids = accepted.map(r => r.senderId.toString() === req.userId ? r.recipientId : r.senderId);
-    const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData").sort({ username: 1 });
-    return res.json({ users: users.map(publicContact) });
+    const acceptedIds = new Set(accepted.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()));
+    const users = await User.find({ _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").sort({ username: 1 }).limit(1000);
+    return res.json({ users: users.map(user => ({ ...publicContact(user), isFriend: acceptedIds.has(user._id.toString()) })) });
   } catch (err) {
     return next(err);
   }
