@@ -53,7 +53,8 @@ const userSchema = new Schema(
 const conversationSchema = new Schema(
   {
     participants: { type: [Schema.Types.ObjectId], required: true, index: true },
-    key: { type: String, required: true, unique: true }
+    key: { type: String, required: true, unique: true },
+    autoDeleteSeconds: { type: Number, default: 0, enum: [0, -1, 5, 60, 3600, 86400] }
   },
   { timestamps: true }
 );
@@ -65,7 +66,8 @@ const messageSchema = new Schema(
     recipientId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     body: { type: String, required: true, trim: true, maxlength: 4000 },
     replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
-    readAt: { type: Date, default: null, index: true }
+    readAt: { type: Date, default: null, index: true },
+    deleteAt: { type: Date, default: null, index: true }
   },
   { timestamps: true }
 );
@@ -117,7 +119,8 @@ function serializeMessage(m) {
     body: m.body,
     replyTo: m.replyTo ? m.replyTo.toString() : null,
     createdAt: m.createdAt,
-    readAt: m.readAt || null
+    readAt: m.readAt || null,
+    deleteAt: m.deleteAt || null
   };
 }
 
@@ -245,6 +248,20 @@ app.get("/api/users", requireAuth, async (req, res, next) => {
   }
 });
 
+app.patch("/api/conversations/:conversationId/settings", requireAuth, async (req, res, next) => {
+  try {
+    const seconds = Number(req.body?.autoDeleteSeconds);
+    if (![0, -1, 5, 60, 3600, 86400].includes(seconds)) return res.status(400).json({ error: "Invalid auto-delete setting." });
+    const conversation = await Conversation.findById(req.params.conversationId);
+    if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+    if (!conversation.participants.some(id => id.toString() === req.userId)) return res.status(403).json({ error: "Not a participant in this conversation." });
+    conversation.autoDeleteSeconds = seconds;
+    await conversation.save();
+    io.to(conversation.participants[0].toString()).to(conversation.participants[1].toString()).emit("conversation:settings", { conversationId: conversation._id.toString(), autoDeleteSeconds: seconds });
+    return res.json({ autoDeleteSeconds: seconds });
+  } catch (err) { return next(err); }
+});
+
 app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
   try {
     const { personId } = req.params;
@@ -264,7 +281,8 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     return res.json({
       conversation: {
         _id: conversation._id.toString(),
-        participants: conversation.participants.map((id) => id.toString())
+        participants: conversation.participants.map((id) => id.toString()),
+        autoDeleteSeconds: Number(conversation.autoDeleteSeconds || 0)
       },
       messages: messages.map(serializeMessage)
     });
@@ -284,6 +302,17 @@ app.use((err, _req, res, _next) => {
 // ---------------------------------------------------------------------------
 // HTTP + Socket.IO
 // ---------------------------------------------------------------------------
+setInterval(async () => {
+  try {
+    const expired = await Message.find({ deleteAt: { $ne: null, $lte: new Date() } }).select("_id conversationId");
+    if (!expired.length) return;
+    await Message.deleteMany({ _id: { $in: expired.map(message => message._id) } });
+    const grouped = new Map();
+    for (const message of expired) { const key = message.conversationId.toString(); if (!grouped.has(key)) grouped.set(key, []); grouped.get(key).push(message._id.toString()); }
+    for (const [conversationId, messageIds] of grouped) { const conversation = await Conversation.findById(conversationId).select("participants"); if (conversation) io.to(conversation.participants[0].toString()).to(conversation.participants[1].toString()).emit("message:deleted", { conversationId, messageIds }); }
+  } catch (err) { console.error("[cleanup] auto-delete failed", err); }
+}, 1000);
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: corsOrigin, methods: ["GET", "POST"] } });
 
@@ -367,10 +396,15 @@ io.on("connection", (socket) => {
       io.to(participants[0]).to(participants[1]).emit("message:read", {
         conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt
       });
-      await Message.deleteMany({ _id: { $in: ids }, recipientId: socket.userId });
-      io.to(participants[0]).to(participants[1]).emit("message:deleted", {
-        conversationId: conversationId.toString(), messageIds: idStrings
-      });
+      const deleteSeconds = Number(conversation.autoDeleteSeconds || 0);
+      if (deleteSeconds === -1) {
+        await Message.deleteMany({ _id: { $in: ids }, recipientId: socket.userId });
+        io.to(participants[0]).to(participants[1]).emit("message:deleted", { conversationId: conversationId.toString(), messageIds: idStrings });
+      } else if (deleteSeconds > 0) {
+        const deleteAt = new Date(Date.now() + deleteSeconds * 1000);
+        await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId }, { $set: { deleteAt } });
+        io.to(participants[0]).to(participants[1]).emit("message:read", { conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt, deleteAt });
+      }
       await publishUnreadCount(socket.userId);
       return respond({ ok: true, deletedIds: idStrings });
     } catch (err) {
