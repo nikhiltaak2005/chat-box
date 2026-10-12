@@ -37,7 +37,8 @@
       "package.json"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "Personal-Messenger-Setup-${version}.${ext}"
     },
     "directories": {
       "output": "release"
