@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -40,6 +40,9 @@ export default function App() {
   const [profileAvatar, setProfileAvatar] = useState(me?.avatarData || "");
   const [profileSaving, setProfileSaving] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [autoDeleteSeconds, setAutoDeleteSeconds] = useState(0);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const socketRef = useRef(null);
   const bottomRef = useRef(null);
   const activeRef = useRef(active);
@@ -108,6 +111,9 @@ export default function App() {
       const ids = new Set(payload.messageIds || []);
       setMessages(prev => prev.map(message => ids.has(message._id) ? { ...message, readAt: payload.readAt } : message));
     });
+    socket.on("conversation:settings", payload => {
+      if (payload?.conversationId === activeRef.current?.conversationId) setAutoDeleteSeconds(Number(payload.autoDeleteSeconds || 0));
+    });
     socket.on("message:deleted", payload => {
       if (payload?.conversationId !== activeRef.current?.conversationId) return;
       const ids = new Set(payload.messageIds || []);
@@ -167,10 +173,20 @@ export default function App() {
     try {
       const data = await request(`/api/conversations/${person._id}`, token);
       readRequestRef.current = "";
+      setAutoDeleteSeconds(Number(data.conversation.autoDeleteSeconds || 0));
       setActive({ ...person, conversationId: data.conversation._id });
       setMessages(data.messages || []); setReplyTo(null);
     } catch (e) { setError(e.message); }
   }
+  async function saveChatSettings(e) {
+    e.preventDefault(); if (!active) return;
+    setSettingsSaving(true); setError("");
+    try {
+      const data = await request(`/api/conversations/${active.conversationId}/settings`, token, { method: "PATCH", body: JSON.stringify({ autoDeleteSeconds }) });
+      setAutoDeleteSeconds(Number(data.autoDeleteSeconds || 0)); setSettingsOpen(false);
+    } catch (e) { setError(e.message); } finally { setSettingsSaving(false); }
+  }
+
   async function sendMessage(e) {
     e?.preventDefault();
     const body = draft.trim();
@@ -213,6 +229,7 @@ export default function App() {
           <button className="icon-btn back" onClick={()=>setActive(null)}><ArrowLeft size={17}/></button>
           <div className="avatar">{active.avatarData ? <img src={active.avatarData} alt=""/> : (active.displayName || active.username).slice(0,1).toUpperCase()}</div>
           <div className="contact-meta"><strong>{active.displayName || active.username}</strong><small>@{active.username}</small></div>
+          <button className="icon-btn" title="Disappearing messages settings" onClick={()=>setSettingsOpen(true)}><Settings size={15}/></button>
           <div className="online-dot" title={status}/>
         </div>
         <div className="messages">
@@ -235,6 +252,7 @@ export default function App() {
         <div className="footer-note"><Circle size={7} fill="currentColor"/> PRIVATE SPACE · REAL-TIME CHAT</div>
       </section>}
     </>}
+    {settingsOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSettingsOpen(false);}}><form className="profile-dialog" onSubmit={saveChatSettings}><div className="profile-heading"><div><p className="eyebrow">SNAPCHAT-STYLE</p><h2>Disappearing messages</h2></div><button type="button" className="icon-btn" onClick={()=>setSettingsOpen(false)}><X size={17}/></button></div><label>Delete messages<select className="setting-select" value={autoDeleteSeconds} onChange={e=>setAutoDeleteSeconds(Number(e.target.value))}><option value={0}>Off — keep messages</option><option value={-1}>Immediately after seen</option><option value={5}>5 seconds after seen</option><option value={60}>1 minute after seen</option><option value={3600}>1 hour after seen</option><option value={86400}>24 hours after seen</option></select></label><p className="muted">The timer starts only after the recipient opens this conversation and the message is marked seen. If their chat is minimized or hidden, it stays unread. This setting applies to this conversation on both sides.</p><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setSettingsOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={settingsSaving}>{settingsSaving ? "Saving…" : "Save settings"}</button></div></form></div>}
     {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;
 }
