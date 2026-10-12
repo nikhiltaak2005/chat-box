@@ -1,10 +1,33 @@
 const { app, BrowserWindow, ipcMain, screen, Notification } = require("electron");
 const path = require("path");
+const { autoUpdater } = require("electron-updater");
 
 let chatWindow;
 let petWindow;
 let unreadCount = 0;
 let isQuitting = false;
+let updateState = { status: "idle", version: "", percent: 0, message: "Check for updates" };
+
+function publishUpdateState(next) {
+  updateState = { ...updateState, ...next };
+  if (chatWindow && !chatWindow.isDestroyed()) chatWindow.webContents.send("updater:status", updateState);
+}
+
+function configureAutoUpdater() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("checking-for-update", () => publishUpdateState({ status: "checking", message: "Checking for updates…" }));
+  autoUpdater.on("update-available", info => publishUpdateState({ status: "available", version: info.version, percent: 0, message: `Version ${info.version} is available` }));
+  autoUpdater.on("update-not-available", info => publishUpdateState({ status: "current", version: info.version || app.getVersion(), percent: 0, message: "You’re using the latest version" }));
+  autoUpdater.on("download-progress", progress => publishUpdateState({ status: "downloading", percent: Math.round(progress.percent || 0), message: `Downloading update… ${Math.round(progress.percent || 0)}%` }));
+  autoUpdater.on("update-downloaded", info => publishUpdateState({ status: "downloaded", version: info.version, percent: 100, message: `Version ${info.version} is ready to install` }));
+  autoUpdater.on("error", err => {
+    console.error("[updater]", err);
+    publishUpdateState({ status: "error", message: err?.message || "Update check failed" });
+  });
+  setTimeout(() => autoUpdater.checkForUpdates().catch(err => console.error("[updater] startup check failed", err)), 8000);
+}
 
 function sendChatVisibility(visible) {
   if (!chatWindow || chatWindow.isDestroyed()) return;
@@ -78,6 +101,7 @@ function createChatWindow() {
 app.whenReady().then(() => {
   createPetWindow();
   createChatWindow();
+  configureAutoUpdater();
 });
 app.on("before-quit", () => { isQuitting = true; });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
@@ -104,3 +128,25 @@ ipcMain.on("notification:incoming", (_event, body) => {
 ipcMain.on("unread:set-count", (_event, count) => setUnreadCount(count));
 ipcMain.on("pet:ready", () => petWindow?.webContents.send("pet:unread-count", unreadCount));
 ipcMain.handle("app:platform", () => process.platform);
+
+
+ipcMain.handle("updater:get-status", () => updateState);
+ipcMain.handle("updater:check", async () => {
+  if (!app.isPackaged) return { ...updateState, status: "dev", message: "Updates are available in the installed app." };
+  try {
+    await autoUpdater.checkForUpdates();
+    return updateState;
+  } catch (err) {
+    publishUpdateState({ status: "error", message: err?.message || "Could not check for updates" });
+    return updateState;
+  }
+});
+ipcMain.handle("updater:download", async () => {
+  if (!app.isPackaged) return updateState;
+  try { await autoUpdater.downloadUpdate(); return updateState; }
+  catch (err) { publishUpdateState({ status: "error", message: err?.message || "Could not download update" }); return updateState; }
+});
+ipcMain.handle("updater:install", () => {
+  if (updateState.status === "downloaded") { isQuitting = true; autoUpdater.quitAndInstall(false, true); return true; }
+  return false;
+});
