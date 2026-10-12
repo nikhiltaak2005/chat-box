@@ -175,9 +175,9 @@ export default function App() {
     e?.preventDefault();
     const body = draft.trim();
     if (!body || !active) return;
-    const reply = replyTo ? "[Reply to: " + replyTo.body.slice(0, 200) + "]\n" : "";
+    const replyMessageId = replyTo?._id || null;
     setDraft(""); setReplyTo(null);
-    socketRef.current?.emit("message:send", { conversationId: active.conversationId, body: reply + body }, result => {
+    socketRef.current?.emit("message:send", { conversationId: active.conversationId, body, replyTo: replyMessageId }, result => {
       if (result?.error) { setError(result.error); setDraft(body); }
     });
   }
@@ -217,7 +217,7 @@ export default function App() {
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button></div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button></div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
