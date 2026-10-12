@@ -37,3 +37,5 @@
 .reply-preview button{border:0;background:transparent;color:#aaa}
 
 .quoted-message{border-left:3px solid #fa875e;background:#00000014;border-radius:3px;padding:5px 7px;margin:-2px 0 6px;font-size:10px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+.setting-select{width:100%;border:1px solid #35363f;background:#1b1c22;color:#f4f4f6;outline:none;border-radius:9px;padding:11px;font-size:12px;cursor:pointer}.setting-select option{background:#1b1c22;color:#f4f4f6}
