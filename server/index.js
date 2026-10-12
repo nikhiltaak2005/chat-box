@@ -145,7 +145,7 @@ async function findOrCreateConversation(a, b) {
 // ---------------------------------------------------------------------------
 const app = express();
 app.use(cors({ origin: corsOrigin }));
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, db: mongoose.connection.readyState === 1 ? "connected" : "disconnected" });
@@ -214,8 +214,8 @@ app.patch("/api/profile", requireAuth, async (req, res, next) => {
     if (!/^[a-z0-9_]{3,24}$/.test(username)) {
       return res.status(400).json({ error: "Username must be 3-24 characters (letters, numbers, underscore)." });
     }
-    if (avatarData && (!/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatarData) || avatarData.length > 1500000)) {
-      return res.status(400).json({ error: "Choose an image under 1 MB (PNG, JPG, WEBP or GIF)." });
+    if (avatarData && (!/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatarData) || avatarData.length > 1000000)) {
+      return res.status(400).json({ error: "Choose an image under about 700 KB (PNG, JPG, WEBP or GIF)." });
     }
     const duplicate = await User.findOne({ username, _id: { $ne: req.userId } });
     if (duplicate) return res.status(409).json({ error: "That username is already taken." });
@@ -235,7 +235,7 @@ app.patch("/api/profile", requireAuth, async (req, res, next) => {
 app.get("/api/users", requireAuth, async (req, res, next) => {
   try {
     const users = await User.find({ _id: { $ne: req.userId } })
-      .select("username displayName")
+      .select("username displayName avatarData")
       .sort({ username: 1 });
     return res.json({ users: users.map(publicContact) });
   } catch (err) {
