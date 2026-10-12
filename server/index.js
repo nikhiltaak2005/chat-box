@@ -281,7 +281,8 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     return res.json({
       conversation: {
         _id: conversation._id.toString(),
-        participants: conversation.participants.map((id) => id.toString())
+        participants: conversation.participants.map((id) => id.toString()),
+        autoDeleteSeconds: Number(conversation.autoDeleteSeconds || 0)
       },
       messages: messages.map(serializeMessage)
     });
