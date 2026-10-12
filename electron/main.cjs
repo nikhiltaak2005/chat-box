@@ -6,6 +6,35 @@ let petWindow;
 let unreadCount = 0;
 let isQuitting = false;
 
+function sendChatVisibility(visible) {
+  if (!chatWindow || chatWindow.isDestroyed()) return;
+  chatWindow.webContents.send("chat:visibility", Boolean(visible));
+}
+
+function hideChat() {
+  if (chatWindow && !chatWindow.isDestroyed()) {
+    sendChatVisibility(false);
+    chatWindow.hide();
+  }
+  if (petWindow && !petWindow.isDestroyed()) petWindow.show();
+}
+
+function showChat() {
+  if (!chatWindow || chatWindow.isDestroyed()) createChatWindow();
+  if (!chatWindow) return;
+  petWindow?.hide();
+  chatWindow.show();
+  chatWindow.focus();
+  sendChatVisibility(true);
+}
+
+function setUnreadCount(count) {
+  unreadCount = Number.isFinite(Number(count)) ? Math.max(0, Math.floor(Number(count))) : 0;
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send("pet:unread-count", unreadCount);
+  }
+}
+
 function createPetWindow() {
   const area = screen.getPrimaryDisplay().workArea;
   petWindow = new BrowserWindow({
@@ -25,18 +54,24 @@ function createChatWindow() {
     width: 380, height: 610, minWidth: 320, minHeight: 420,
     frame: false, transparent: false, alwaysOnTop: true, resizable: true,
     maximizable: false, autoHideMenuBar: true, backgroundColor: "#111318",
-    title: "Personal Messenger", show: false,
+    title: "PocketChat", show: false,
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   if (!app.isPackaged) chatWindow.loadURL("http://127.0.0.1:5173");
   else chatWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+
+  chatWindow.on("blur", () => {
+    // Clicking anywhere outside the chat returns the user to the floating pet.
+    if (!isQuitting) hideChat();
+  });
   chatWindow.on("close", (event) => {
     if (!isQuitting) {
       event.preventDefault();
-      chatWindow.hide();
-      petWindow?.show();
+      hideChat();
     }
   });
+  chatWindow.on("show", () => sendChatVisibility(true));
+  chatWindow.on("hide", () => sendChatVisibility(false));
   chatWindow.on("closed", () => { chatWindow = null; });
 }
 
@@ -47,8 +82,9 @@ app.whenReady().then(() => {
 app.on("before-quit", () => { isQuitting = true; });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 
-ipcMain.on("window:minimize", () => { chatWindow?.hide(); petWindow?.show(); });
-ipcMain.on("window:close", () => { chatWindow?.hide(); petWindow?.show(); });
+ipcMain.on("window:minimize", hideChat);
+ipcMain.on("window:close", hideChat);
+ipcMain.on("window:quit", () => app.quit());
 ipcMain.on("window:toggle-top", (_event, enabled) => chatWindow?.setAlwaysOnTop(Boolean(enabled)));
 ipcMain.on("pet:move", (_event, x, y) => {
   if (!petWindow || !Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -57,25 +93,14 @@ ipcMain.on("pet:move", (_event, x, y) => {
   const ny = Math.max(area.y, Math.min(Math.round(y), area.y + area.height - 120));
   petWindow.setPosition(nx, ny);
 });
-ipcMain.on("pet:open-chat", () => {
-  if (!chatWindow) createChatWindow();
-  const bounds = petWindow?.getBounds();
-  if (bounds) {
-    const display = screen.getDisplayMatching(bounds).workArea;
-    const x = Math.max(display.x, Math.min(bounds.x + 100 - 380, display.x + display.width - 380));
-    const y = Math.max(display.y, Math.min(bounds.y + 20 - 40, display.y + display.height - 610));
-    chatWindow.setPosition(x, y);
+ipcMain.on("pet:open-chat", showChat);
+ipcMain.on("notification:incoming", (_event, body) => {
+  // The badge is driven by the server's unread:count event, never incremented locally.
+  if (chatWindow && chatWindow.isVisible()) return;
+  if (Notification.isSupported()) {
+    new Notification({ title: "PocketChat", body: typeof body === "string" && body ? body.slice(0, 180) : "You received a new message." }).show();
   }
-  petWindow?.hide();
-  chatWindow.show();
-  chatWindow.focus();
-  unreadCount = 0;
-  petWindow?.webContents.send("pet:unread-count", unreadCount);
 });
-ipcMain.on("notification:incoming", () => {
-  unreadCount += 1;
-  petWindow?.webContents.send("pet:unread-count", unreadCount);
-  if (Notification.isSupported()) new Notification({ title: "PocketChat", body: "You received a new message." }).show();
-});
+ipcMain.on("unread:set-count", (_event, count) => setUnreadCount(count));
 ipcMain.on("pet:ready", () => petWindow?.webContents.send("pet:unread-count", unreadCount));
 ipcMain.handle("app:platform", () => process.platform);
