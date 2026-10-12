@@ -62,7 +62,8 @@ const messageSchema = new Schema(
     conversationId: { type: Schema.Types.ObjectId, ref: "Conversation", required: true, index: true },
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     recipientId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    body: { type: String, required: true, trim: true, maxlength: 4000 }
+    body: { type: String, required: true, trim: true, maxlength: 4000 },
+    readAt: { type: Date, default: null, index: true }
   },
   { timestamps: true }
 );
@@ -112,8 +113,15 @@ function serializeMessage(m) {
     senderId: m.senderId.toString(),
     recipientId: m.recipientId.toString(),
     body: m.body,
-    createdAt: m.createdAt
+    createdAt: m.createdAt,
+    readAt: m.readAt || null
   };
+}
+
+async function publishUnreadCount(userId) {
+  const count = await Message.countDocuments({ recipientId: userId, readAt: null });
+  io.to(userId.toString()).emit("unread:count", count);
+  return count;
 }
 
 async function findOrCreateConversation(a, b) {
@@ -260,6 +268,7 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   // One room per user id so every open client/device receives live messages.
   socket.join(socket.userId);
+  publishUnreadCount(socket.userId).catch((err) => console.error("[socket] unread count failed", err));
 
   socket.on("message:send", async (payload, ack) => {
     const respond = typeof ack === "function" ? ack : () => {};
@@ -289,10 +298,47 @@ io.on("connection", (socket) => {
       const serialized = serializeMessage(message);
 
       io.to(recipientId).to(socket.userId).emit("message:new", serialized);
+      await publishUnreadCount(recipientId);
       return respond({ ok: true, message: serialized });
     } catch (err) {
       console.error("[socket] message:send failed", err);
       return respond({ error: "Could not send message." });
+    }
+  });
+
+  // A message is considered seen only when the recipient has the conversation open
+  // and the renderer explicitly confirms it. Seen messages are then deleted for
+  // both participants, keeping all devices consistent.
+  socket.on("message:read", async (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    try {
+      const conversationId = payload?.conversationId;
+      if (!isValidId(conversationId)) return respond({ error: "Invalid conversation." });
+      const conversation = await Conversation.findById(conversationId);
+      if (!conversation) return respond({ error: "Conversation not found." });
+      const participants = conversation.participants.map((id) => id.toString());
+      if (!participants.includes(socket.userId)) return respond({ error: "Not a participant in this conversation." });
+
+      const unread = await Message.find({ conversationId, recipientId: socket.userId, readAt: null }).select("_id senderId");
+      if (unread.length === 0) return respond({ ok: true, deletedIds: [] });
+      const ids = unread.map((m) => m._id);
+      const idStrings = ids.map((id) => id.toString());
+      const readAt = new Date();
+      await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId, readAt: null }, { $set: { readAt } });
+
+      // Send the read receipt before the deletion event; both are emitted in order.
+      io.to(participants[0]).to(participants[1]).emit("message:read", {
+        conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt
+      });
+      await Message.deleteMany({ _id: { $in: ids }, recipientId: socket.userId });
+      io.to(participants[0]).to(participants[1]).emit("message:deleted", {
+        conversationId: conversationId.toString(), messageIds: idStrings
+      });
+      await publishUnreadCount(socket.userId);
+      return respond({ ok: true, deletedIds: idStrings });
+    } catch (err) {
+      console.error("[socket] message:read failed", err);
+      return respond({ error: "Could not mark messages as seen." });
     }
   });
 });
