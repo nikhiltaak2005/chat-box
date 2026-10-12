@@ -123,7 +123,7 @@ export default function App() {
     socket.emit("message:read", { conversationId }, result => {
       if (result?.error) console.error("[Socket] Could not mark messages read:", result.error);
     });
-  }, [token, me, active?.conversationId, chatVisible, messages]);
+  }, [token, me, active?.conversationId, chatVisible, messages, status]);
 
   async function submitAuth(e) {
     e.preventDefault(); setAuthError("");
