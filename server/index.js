@@ -262,8 +262,13 @@ function requireAdmin(req, res, next) {
 app.get("/api/users/search", requireAuth, async (req, res, next) => {
   try {
     const username = String(req.query?.username || "").trim().toLowerCase();
-    if (username.length < 3) return res.json({ users: [] });
-    const users = await User.find({ username: { $regex: "^" + username.replace(/[.*+?^${}()|[\]\\]/g, "\\app.get("/api/friends", requireAuth, async (req, res, next) => {") }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").limit(20);
+    if (!/^[a-z0-9_]{3,24}$/.test(username)) return res.json({ users: [] });
+    const users = await User.find({ username: { $regex: "^" + username }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").limit(20);
+    return res.json({ users: users.map(publicContact) });
+  } catch (err) { return next(err); }
+});
+
+app.get("/api/friends", requireAuth, async (req, res, next) => {") }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").limit(20);
     return res.json({ users: users.map(publicContact) });
   } catch (err) { return next(err); }
 });
