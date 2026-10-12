@@ -44,6 +44,7 @@ const userSchema = new Schema(
   {
     username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24 },
     displayName: { type: String, trim: true, maxlength: 40, default: "" },
+    avatarData: { type: String, default: "", maxlength: 1500000 },
     passwordHash: { type: String, required: true }
   },
   { timestamps: true }
@@ -90,12 +91,12 @@ function verifyToken(token) {
 
 // Shape returned to the client on login/register (client reads user.id).
 function publicSelf(user) {
-  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "" };
+  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "" };
 }
 
 // Shape returned by /api/users (client reads contact._id).
 function publicContact(user) {
-  return { _id: user._id.toString(), username: user.username, displayName: user.displayName || "" };
+  return { _id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "" };
 }
 
 function conversationKey(a, b) {
@@ -201,6 +202,32 @@ app.post("/api/auth/login", async (req, res, next) => {
 
     return res.json({ token: signToken(user._id), user: publicSelf(user) });
   } catch (err) {
+    return next(err);
+  }
+});
+
+app.patch("/api/profile", requireAuth, async (req, res, next) => {
+  try {
+    const displayName = String(req.body?.displayName || "").trim().slice(0, 40);
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const avatarData = String(req.body?.avatarData || "");
+    if (!/^[a-z0-9_]{3,24}$/.test(username)) {
+      return res.status(400).json({ error: "Username must be 3-24 characters (letters, numbers, underscore)." });
+    }
+    if (avatarData && (!/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatarData) || avatarData.length > 1500000)) {
+      return res.status(400).json({ error: "Choose an image under 1 MB (PNG, JPG, WEBP or GIF)." });
+    }
+    const duplicate = await User.findOne({ username, _id: { $ne: req.userId } });
+    if (duplicate) return res.status(409).json({ error: "That username is already taken." });
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      { $set: { username, displayName, avatarData } },
+      { new: true, runValidators: true }
+    );
+    if (!user) return res.status(404).json({ error: "User not found." });
+    return res.json({ user: publicSelf(user) });
+  } catch (err) {
+    if (err?.code === 11000) return res.status(409).json({ error: "That username is already taken." });
     return next(err);
   }
 });
