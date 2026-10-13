@@ -448,7 +448,7 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
         participants: conversation.participants.map((id) => id.toString()),
         autoDeleteSeconds: Number(conversation.autoDeleteSeconds || 0)
       },
-      messages: messages.map(message => serializeMessage(hidePeerReadReceipts && message.senderId.toString() === req.userId))
+      messages: messages.map(message => serializeMessage(message, hidePeerReadReceipts && message.senderId.toString() === req.userId))
     });
   } catch (err) {
     return next(err);
