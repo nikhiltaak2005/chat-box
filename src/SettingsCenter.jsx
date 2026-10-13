@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Bell, Palette, ShieldCheck, X, RotateCcw, Save, Image as ImageIcon } from "lucide-react";
 
-export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false };
+export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false, appLockEnabled: false, appLockTimeoutMinutes: 5 };
 
 export const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
@@ -92,6 +92,8 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
             <label className="settings-toggle"><span><strong>Always on top</strong><small>Keep the floating pet above other windows.</small></span><input type="checkbox" checked={deviceDraft.pet.alwaysOnTop} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,alwaysOnTop:e.target.checked}}))}/></label>
             <label className="settings-toggle"><span><strong>Pet animation</strong><small>Enable hover movement and playful feedback.</small></span><input type="checkbox" checked={deviceDraft.pet.animate} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,animate:e.target.checked}}))}/></label>
             <label className="settings-toggle"><span><strong>Start with Windows</strong><small>Launch PocketChat when you sign in to Windows.</small></span><input type="checkbox" checked={deviceDraft.launchAtStartup} onChange={e=>setDeviceDraft(prev=>({...prev,launchAtStartup:e.target.checked}))}/></label>
+            <label className="settings-toggle"><span><strong>App lock</strong><small>Require your account password after inactivity and when the app starts.</small></span><input type="checkbox" checked={deviceDraft.appLockEnabled} onChange={e=>setDeviceDraft(prev=>({...prev,appLockEnabled:e.target.checked}))}/></label>
+            {deviceDraft.appLockEnabled && <Field label="Auto-lock after"><select className="setting-select" value={deviceDraft.appLockTimeoutMinutes} onChange={e=>setDeviceDraft(prev=>({...prev,appLockTimeoutMinutes:Number(e.target.value)}))}><option value={1}>1 minute</option><option value={5}>5 minutes</option><option value={10}>10 minutes</option><option value={15}>15 minutes</option><option value={30}>30 minutes</option></select></Field>}
           </div>}
           {tab === "chat" && <div className="settings-section"><h3>Chat & Media</h3><p className="muted">These account preferences sync with your other devices.</p>
             <label className="settings-toggle"><span><strong>Enter to send</strong><small>When off, Enter inserts a new line and Ctrl+Enter sends.</small></span><input type="checkbox" checked={chat.enterToSend} onChange={e=>patch("chat","enterToSend",e.target.checked)}/></label>
