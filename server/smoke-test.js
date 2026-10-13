@@ -166,6 +166,19 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
 
   aliceSocket.close();
   bobSocket.close();
+
+  const charlie = await req("/api/auth/register", { method: "POST", body: { username: `charlie_${stamp}`, password: "password123" } });
+  await req("/api/sessions/revoke-all", { method: "POST", token: charlie.token });
+  const revokedCheck = await fetch(API + "/api/preferences", { headers: { Authorization: "Bearer " + charlie.token } });
+  if (revokedCheck.status !== 401) throw new Error("revoked session token still works");
+  console.log("PASS revoke-all invalidates old sessions");
+
+  const dave = await req("/api/auth/register", { method: "POST", body: { username: `dave_${stamp}`, password: "password123" } });
+  await req("/api/account", { method: "DELETE", token: dave.token, body: { password: "password123" } });
+  const deletedCheck = await fetch(API + "/api/preferences", { headers: { Authorization: "Bearer " + dave.token } });
+  if (deletedCheck.status !== 401) throw new Error("deleted account token still works");
+  console.log("PASS account deletion removes account access");
+
   console.log("\nALL CHECKS PASSED");
   process.exit(0);
 })().catch((err) => {
