@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import EmojiPicker from "emoji-picker-react";
+import MediaPicker from "./MediaPicker.jsx";
 import SettingsCenter, { DEFAULT_DEVICE_PREFERENCES, DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2 } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -33,6 +34,7 @@ export default function App() {
   const [friendRequests, setFriendRequests] = useState([]);
   const [friendUsername, setFriendUsername] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminUsers, setAdminUsers] = useState([]);
   const [active, setActive] = useState(null);
@@ -179,6 +181,15 @@ export default function App() {
       const ids = new Set(payload.messageIds || []);
       setMessages(prev => prev.map(message => ids.has(message._id) ? { ...message, readAt: payload.readAt } : message));
     });
+    socket.on("message:reaction", payload => {
+      if (payload?.conversationId === activeRef.current?.conversationId) {
+        setMessages(prev => prev.map(message => message._id === payload.messageId ? { ...message, reactions: payload.reactions || [] } : message));
+      }
+      const prefs = preferencesRef.current;
+      if (payload?.messageSenderId === me.id && payload.actorId !== me.id && prefs.notifications.enabled && prefs.notifications.reactions && !visibleRef.current && !isQuietNow(prefs.notifications)) {
+        window.desktop?.notifyIncoming("Someone reacted to your message.", { sound: prefs.notifications.sound });
+      }
+    });
     socket.on("message:hidden", payload => {
       if (payload?.conversationId !== activeRef.current?.conversationId) return;
       const ids = new Set(payload.messageIds || []);
@@ -315,6 +326,26 @@ export default function App() {
     });
   }
 
+  function toggleReaction(message, emoji) {
+    socketRef.current?.emit("message:reaction", { messageId: message._id, emoji }, result => {
+      if (result?.error) setError(result.error);
+    });
+  }
+
+  function sendMedia(media) {
+    if (!active || !preferences.chat.mediaEnabled) return;
+    socketRef.current?.emit("message:send", {
+      conversationId: active.conversationId,
+      contentType: media.type,
+      mediaUrl: media.mediaUrl,
+      mediaPreviewUrl: media.previewUrl,
+      body: ""
+    }, result => {
+      if (result?.error) setError(result.error);
+      else setMediaOpen(false);
+    });
+  }
+
   async function sendMessage(e) {
     e?.preventDefault();
     const body = draft.trim();
@@ -363,11 +394,11 @@ export default function App() {
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.contentType==="gif" || m.contentType==="sticker" ? <div className={"media-message " + (m.contentType==="sticker" ? "sticker-message" : "")}><img src={m.mediaUrl} alt={m.contentType==="sticker" ? "Sticker" : "GIF"} loading="lazy"/>{m.body && <span>{m.body}</span>}</div> : m.body}</div>{preferences.chat.reactions && <div className="reaction-row">{(m.reactions || []).length>0 && Object.entries((m.reactions || []).reduce((groups,reaction)=>{groups[reaction.emoji]=(groups[reaction.emoji]||[]).concat(reaction);return groups;},{})).map(([emoji,items])=><button key={emoji} type="button" className={items.some(item=>item.userId===me.id)?"reaction-chip selected":"reaction-chip"} onClick={()=>toggleReaction(m,emoji)}>{emoji} {items.length}</button>)}{["👍","❤️","😂","😮","🔥"].map(emoji=><button key={emoji} type="button" className="quick-reaction" title={"React "+emoji} onClick={()=>toggleReaction(m,emoji)}>{emoji}</button>)}</div>}<div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body || m.mediaUrl || "")}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
-        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-picker-popover"><EmojiPicker onEmojiClick={emojiData=>setDraft(d=>d+emojiData.emoji)} width="100%" height={340} theme={preferences.appearance.theme === "light" ? "light" : "dark"} lazyLoadEmojis searchPlaceHolder="Search all emojis…" previewConfig={{showPreview:false}} /></div>}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
+        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body || (replyTo.contentType==="sticker"?"Sticker":replyTo.contentType==="gif"?"GIF":"Message")}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-picker-popover"><EmojiPicker onEmojiClick={emojiData=>setDraft(d=>d+emojiData.emoji)} width="100%" height={340} theme={preferences.appearance.theme === "light" ? "light" : "dark"} lazyLoadEmojis searchPlaceHolder="Search all emojis…" previewConfig={{showPreview:false}} /></div>}{mediaOpen && <MediaPicker token={token} onSelect={sendMedia} onClose={()=>setMediaOpen(false)} />}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><button type="button" className="icon-btn media-open-btn" title="GIFs & stickers" disabled={!preferences.chat.mediaEnabled} onClick={()=>setMediaOpen(v=>!v)}><ImageIcon size={16}/></button><textarea className="composer-input" rows={1} value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter" && (preferences.chat.enterToSend && !e.shiftKey || (e.ctrlKey || e.metaKey))){e.preventDefault();sendMessage(e);}}} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
       </section> : <section className="contacts-view">
         <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={16}/></button><button className="icon-btn logout" title="Admin panel" onClick={openAdmin}>A</button><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
         <button className="me-card profile-button" onClick={startProfileEdit} title="Edit your profile"><div className="avatar own">{me.avatarData ? <img src={me.avatarData} alt=""/> : <UserRound size={17}/>}</div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">EDIT PROFILE</span><UserCog size={15}/></button>
