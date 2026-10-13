@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld("desktop", {
   setAlwaysOnTop: (enabled) => ipcRenderer.send("window:toggle-top", enabled),
   openChat: () => ipcRenderer.send("pet:open-chat"),
   movePet: (x, y) => ipcRenderer.send("pet:move", x, y),
-  notifyIncoming: (body) => ipcRenderer.send("notification:incoming", body),
+  notifyIncoming: (body, options) => ipcRenderer.send("notification:incoming", body, options),
   setUnreadCount: (count) => ipcRenderer.send("unread:set-count", count),
   onUnreadCount: (callback) => {
     const listener = (_event, count) => callback(count);
