@@ -340,7 +340,7 @@ app.get("/api/users/search", requireAuth, async (req, res, next) => {
   try {
     const username = String(req.query?.username || "").trim().toLowerCase();
     if (!/^[a-z0-9_]{3,24}$/.test(username)) return res.json({ users: [] });
-    const users = await User.find({ username: { $regex: "^" + username }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").limit(20);
+    const users = await User.find({ username: { $regex: "^" + username }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt").limit(20);
     return res.json({ users: users.map(publicContact) });
   } catch (err) { return next(err); }
 });
@@ -350,8 +350,8 @@ app.get("/api/friends", requireAuth, async (req, res, next) => {
     const requests = await FriendRequest.find({ $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).sort({ createdAt: -1 }).limit(200);
     const ids = [...new Set(requests.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()))];
     const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt");
-    const map = new Map(users.map(u => [u._id.toString(), publicContact(u)]));
-    return res.json({ requests: requests.map(r => ({ id: r._id.toString(), senderId: r.senderId.toString(), recipientId: r.recipientId.toString(), status: r.status, createdAt: r.createdAt, person: map.get((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()) })).filter(r => r.person) });
+    const map = new Map(users.map(u => [u._id.toString(), u]));
+    return res.json({ requests: requests.map(r => ({ id: r._id.toString(), senderId: r.senderId.toString(), recipientId: r.recipientId.toString(), status: r.status, createdAt: r.createdAt, person: map.has((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()) ? publicContact(map.get((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()), { isFriend: r.status === "accepted" }) : null })).filter(r => r.person) });
   } catch (err) { return next(err); }
 });
 
