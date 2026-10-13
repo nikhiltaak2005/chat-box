@@ -152,3 +152,33 @@
 @media(max-width:480px){.media-dialog{max-height:94vh}.media-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.media-item img{height:82px}.media-search{padding:10px}.media-search .primary-btn{min-width:55px;padding:9px 8px}}
 
 .app-shell .messages{background:var(--chat-wallpaper,#111318)}
+
+
+/* Local app lock */
+.app-lock-overlay{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;padding:22px;background:rgba(9,10,14,.96);backdrop-filter:blur(18px)}
+.app-lock-card{width:min(340px,100%);display:flex;flex-direction:column;gap:13px;padding:28px;border:1px solid #393a44;border-radius:18px;background:#191a20;box-shadow:0 24px 80px #0009}
+.app-lock-card h2{font:600 25px 'Space Grotesk',sans-serif;margin:0}
+.app-lock-card .muted{margin:0;line-height:1.6}
+.app-lock-card label{display:flex;flex-direction:column;gap:7px;font-size:11px;color:#d7d7df}
+.app-lock-card input{width:100%;border:1px solid #393a44;border-radius:9px;background:#111318;color:#f5f5f7;padding:11px;outline:none}
+.app-lock-card input:focus{border-color:var(--accent,#fa8059)}
+.lock-icon{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;color:var(--accent,#fa8059);background:color-mix(in srgb,var(--accent,#fa8059) 17%,#191a20)}
+.app-lock-card .primary-btn{width:100%;margin:0}
+.app-shell.theme-light .app-lock-card{background:#fff;border-color:#d7d8df;color:#20212a}
+.app-shell.theme-light .app-lock-card label{color:#20212a}
+.app-shell.theme-light .app-lock-card input{background:#fff;color:#20212a;border-color:#d7d8df}
+.app-shell.theme-light .settings-note{color:#665640}
+@media(prefers-color-scheme:light){
+  .app-shell.theme-system .titlebar,.app-shell.theme-system .chat-header,.app-shell.theme-system .composer{background:#fff;border-color:#e1e2e8}
+  .app-shell.theme-system .contacts-view,.app-shell.theme-system .chat-view{background:#f4f5f8}
+  .app-shell.theme-system .contact-row{border-bottom-color:#e2e3e9}
+  .app-shell.theme-system .contact-row:hover,.app-shell.theme-system .me-card{background:#e9eaf0}
+  .app-shell.theme-system .contact-meta strong,.app-shell.theme-system .brand-title,.app-shell.theme-system .welcome-row h2{color:#20212a}
+  .app-shell.theme-system .composer input,.app-shell.theme-system .composer-input,.app-shell.theme-system .searchbox,.app-shell.theme-system .searchbox input{background:#fff;color:#20212a;border-color:#d7d8df}
+  .app-shell.theme-system .messages{background:var(--chat-wallpaper,#f4f5f8)}
+  .app-shell.theme-system .message.theirs .bubble{background:#e3e4eb;color:#20212a}
+  .app-shell.theme-system .media-dialog,.app-shell.theme-system .settings-dialog{background:#fff;color:#20212a;border-color:#d7d8df}
+  .app-shell.theme-system .settings-heading,.app-shell.theme-system .settings-footer,.app-shell.theme-system .settings-nav{border-color:#e1e2e8}
+  .app-shell.theme-system .settings-section h3,.app-shell.theme-system .settings-toggle,.app-shell.theme-system .settings-field{color:#20212a}
+  .app-shell.theme-system .settings-field>small,.app-shell.theme-system .settings-toggle small{color:#656672}
+}
