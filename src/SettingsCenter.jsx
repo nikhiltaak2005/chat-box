@@ -90,8 +90,8 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
             <label className="settings-toggle"><span><strong>Read receipts</strong><small>Let people know when you have read their messages.</small></span><input type="checkbox" checked={privacy.readReceipts} onChange={e=>patch("privacy","readReceipts",e.target.checked)}/></label>
             <label className="settings-toggle"><span><strong>Share online status</strong><small>Allow contacts to see when you are online, where presence is available.</small></span><input type="checkbox" checked={privacy.showOnline} onChange={e=>patch("privacy","showOnline",e.target.checked)}/></label>
             <Field label="Last seen visibility"><select className="setting-select" value={privacy.lastSeen} onChange={e=>patch("privacy","lastSeen",e.target.value)}><option value="everyone">Everyone</option><option value="contacts">Accepted contacts</option><option value="nobody">Nobody</option></select></Field>
-            <Field label="Profile visibility"><select className="setting-select" value={privacy.profileVisibility} onChange={e=>patch("privacy","profileVisibility",e.target.value)}><option value="everyone">Everyone signed in</option><option value="contacts">Accepted contacts</option><option value="nobody">Nobody except me</option></select></Field>
-            <div className="settings-note">Privacy options are saved to your account. Presence and profile visibility depend on backend enforcement; these will be verified before the feature is marked complete.</div>
+            <Field label="Profile visibility"><select className="setting-select" value={privacy.profileVisibility} onChange={e=>patch("privacy","profileVisibility",e.target.value)}><option value="everyone">Everyone signed in</option><option value="contacts">Accepted contacts</option><option value="nobody">Hide profile details</option></select></Field>
+            <div className="settings-note">Privacy choices sync to your account. Online status is shared only with accepted contacts when enabled, and profile details follow your visibility setting.</div>
           </div>}
         </div>
       </div>
