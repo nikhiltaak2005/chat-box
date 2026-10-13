@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Bell, Palette, ShieldCheck, X, RotateCcw, Save, Image as ImageIcon } from "lucide-react";
 
-export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false };
+export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false };
 
 export const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
@@ -39,6 +39,17 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
     try { await onSave(draft, deviceDraft); setNotice("Settings saved."); }
     catch (error) { setNotice(error?.message || "Could not save settings."); }
   };
+  function handlePetAvatar(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) { setNotice("Use a PNG, JPG or WebP image for the pet."); return; }
+    if (file.size > 1024 * 1024) { setNotice("Custom pet image must be under 1 MB."); return; }
+    const reader = new FileReader();
+    reader.onload = () => setDeviceDraft(prev => ({ ...prev, pet: { ...prev.pet, avatar: "custom", customAvatarData: String(reader.result || "") } }));
+    reader.onerror = () => setNotice("Could not read that image.");
+    reader.readAsDataURL(file);
+    event.target.value = "";
+  }
   const tabs = [
     { id: "appearance", label: "Appearance", icon: Palette },
     { id: "notifications", label: "Notifications", icon: Bell },
@@ -74,7 +85,8 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
             {notifications.quietHoursEnabled && <div className="settings-time-row"><Field label="From"><input className="setting-input" type="time" value={notifications.quietStart} onChange={e=>patch("notifications","quietStart",e.target.value)}/></Field><Field label="Until"><input className="setting-input" type="time" value={notifications.quietEnd} onChange={e=>patch("notifications","quietEnd",e.target.value)}/></Field></div>}
           </div>}
           {tab === "pet" && <div className="settings-section"><h3>Pet & Desktop</h3><p className="muted">These settings stay on this PC and are not synced to your account.</p>
-            <Field label="Pet mascot"><select className="setting-select" value={deviceDraft.pet.avatar} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,avatar:e.target.value}}))}><option value="cat">🐱 Orange cat</option><option value="fox">🦊 Fox</option><option value="dog">🐶 Dog</option><option value="panda">🐼 Panda</option><option value="rabbit">🐰 Rabbit</option><option value="robot">🤖 Robot</option><option value="ghost">👻 Ghost</option><option value="frog">🐸 Frog</option></select></Field>
+            <Field label="Pet mascot"><select className="setting-select" value={deviceDraft.pet.avatar} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,avatar:e.target.value}}))}><option value="cat">🐱 Orange cat</option>{deviceDraft.pet.customAvatarData && <option value="custom">Custom image</option>}<option value="fox">🦊 Fox</option><option value="dog">🐶 Dog</option><option value="panda">🐼 Panda</option><option value="rabbit">🐰 Rabbit</option><option value="robot">🤖 Robot</option><option value="ghost">👻 Ghost</option><option value="frog">🐸 Frog</option></select></Field>
+            <Field label="Custom pet image" description="PNG, JPG or WebP; maximum 1 MB. Stored on this PC."><input className="setting-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={handlePetAvatar}/>{deviceDraft.pet.customAvatarData && <button type="button" className="text-btn" onClick={()=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,avatar:"cat",customAvatarData:""}}))}>Remove custom image</button>}</Field>
             <Field label={"Pet size · " + deviceDraft.pet.size + " px"}><input className="settings-range" type="range" min="64" max="144" step="8" value={deviceDraft.pet.size} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,size:Number(e.target.value)}}))}/></Field>
             <Field label={"Opacity · " + deviceDraft.pet.opacity + "%"}><input className="settings-range" type="range" min="40" max="100" step="5" value={deviceDraft.pet.opacity} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,opacity:Number(e.target.value)}}))}/></Field>
             <label className="settings-toggle"><span><strong>Always on top</strong><small>Keep the floating pet above other windows.</small></span><input type="checkbox" checked={deviceDraft.pet.alwaysOnTop} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,alwaysOnTop:e.target.checked}}))}/></label>
