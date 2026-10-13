@@ -4,7 +4,7 @@ import { Bell, Palette, ShieldCheck, X, RotateCcw, Save, Image as ImageIcon } fr
 export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false };
 
 export const DEFAULT_PREFERENCES = {
-  appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
+  appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
   chat: { enterToSend: true, reactions: true, mediaEnabled: true },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
@@ -58,6 +58,7 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
         <div className="settings-content">
           {tab === "appearance" && <div className="settings-section"><h3>Appearance</h3><p className="muted">These account preferences sync with your other devices.</p>
             <Field label="Theme"><select className="setting-select" value={appearance.theme} onChange={e=>patch("appearance","theme",e.target.value)}><option value="dark">Dark</option><option value="light">Light</option><option value="system">Follow system</option></select></Field>
+            <Field label="Chat background color" description="Choose a solid background for your message area."><div className="settings-color-row"><input aria-label="Chat background color" type="color" value={appearance.wallpaperColor} onChange={e=>patch("appearance","wallpaperColor",e.target.value)}/><code>{appearance.wallpaperColor}</code><button type="button" className="text-btn" onClick={()=>patch("appearance","wallpaperColor",DEFAULT_PREFERENCES.appearance.wallpaperColor)}>Reset</button></div></Field>
             <Field label="Accent color" description="Used for buttons, highlights and your active state."><div className="settings-color-row"><input aria-label="Accent color" type="color" value={appearance.accentColor} onChange={e=>patch("appearance","accentColor",e.target.value)}/><code>{appearance.accentColor}</code><button type="button" className="text-btn" onClick={()=>patch("appearance","accentColor",DEFAULT_PREFERENCES.appearance.accentColor)}>Reset</button></div></Field>
             <Field label="Text size"><select className="setting-select" value={appearance.fontScale} onChange={e=>patch("appearance","fontScale",Number(e.target.value))}><option value={0.9}>Small</option><option value={1}>Default</option><option value={1.1}>Large</option><option value={1.2}>Extra large</option></select></Field>
             <Field label="Chat density"><select className="setting-select" value={appearance.density} onChange={e=>patch("appearance","density",e.target.value)}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></Field>
