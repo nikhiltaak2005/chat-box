@@ -2,9 +2,12 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PocketChat Pet</title>
 <style>
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:Segoe UI,Arial,sans-serif;user-select:none}
-.wrap{width:104px;height:120px;display:flex;align-items:center;justify-content:center;flex-direction:column;cursor:grab}.wrap:active{cursor:grabbing}
-.pet-button{position:relative;width:88px;height:88px;border:0;background:transparent;padding:0;cursor:pointer;filter:drop-shadow(0 5px 6px #0006);transition:transform .15s}
+.wrap{width:calc(var(--pet-size,88px) + 16px);height:calc(var(--pet-size,88px) + 32px);display:flex;align-items:center;justify-content:center;flex-direction:column;cursor:grab}.wrap:active{cursor:grabbing}
+.pet-button{position:relative;width:var(--pet-size,88px);height:var(--pet-size,88px);border:0;background:transparent;padding:0;cursor:pointer;filter:drop-shadow(0 5px 6px #0006);transition:transform .15s}
+.pet-button svg{width:var(--pet-size,88px);height:var(--pet-size,88px)}
+.pet-emoji{display:none;font-size:calc(var(--pet-size,88px) * .82);line-height:1}
 .pet-button:hover{transform:translateY(-2px) scale(1.03)}.pet-button:active{transform:scale(.97)}
+.pet-button.no-animation,.pet-button.no-animation:hover,.pet-button.no-animation:active{transition:none;transform:none}
 .badge{display:none;position:absolute;top:0;right:-1px;min-width:23px;height:23px;border:2px solid #fff;border-radius:99px;background:#e84747;color:white;font-size:11px;font-weight:800;align-items:center;justify-content:center;padding:0 5px;box-shadow:0 2px 7px #0005}
 .caption{font-size:10px;font-weight:700;color:white;text-shadow:0 1px 4px #000,0 1px 6px #000;letter-spacing:.2px;margin-top:-1px}
 </style></head><body>
@@ -13,12 +16,22 @@
 <ellipse cx="50" cy="85" rx="28" ry="7" fill="#000" opacity=".18"/><path d="M19 38 L18 13 Q18 8 24 13 L39 25 Q50 20 61 25 L77 13 Q83 9 82 17 L81 41 Q91 52 84 68 Q77 86 51 86 Q24 86 16 67 Q10 50 19 38Z" fill="#FF9A51" stroke="#D96532" stroke-width="2.5" stroke-linejoin="round"/>
 <path d="M25 29 L24 19 L36 28Z M64 28 L77 19 L75 31Z" fill="#FFCEB7"/><path d="M27 48 Q32 42 38 48 M61 48 Q67 42 72 48" fill="none" stroke="#593B30" stroke-width="3.5" stroke-linecap="round"/>
 <ellipse cx="49" cy="59" rx="16" ry="12" fill="#FFD7B7"/><path d="M46 56 Q50 52 54 56 L50 60Z" fill="#8E4B45"/><path d="M50 60 Q45 65 41 61 M50 60 Q55 65 59 61" fill="none" stroke="#8E4B45" stroke-width="1.8" stroke-linecap="round"/><path d="M34 59 L18 56 M34 64 L18 67 M66 59 L82 56 M66 64 L82 67" stroke="#8E4B45" stroke-width="1.5" stroke-linecap="round"/><path d="M29 34 Q36 30 42 34 M58 34 Q64 30 70 34" fill="none" stroke="#FFD2A5" stroke-width="3" stroke-linecap="round"/><path d="M72 70 Q86 67 83 56" fill="none" stroke="#D96532" stroke-width="7" stroke-linecap="round"/><circle cx="78" cy="28" r="3" fill="#fff" opacity=".7"/>
-</svg><span class="badge" id="badge">1</span></button><div class="caption">PocketChat</div></div>
+</svg><span class="pet-emoji" id="petEmoji" aria-hidden="true">🦊</span><span class="badge" id="badge">1</span></button><div class="caption">PocketChat</div></div>
 <script>
-const badge=document.getElementById("badge"), pet=document.getElementById("pet");
+const badge=document.getElementById("badge"), pet=document.getElementById("pet"), svg=pet.querySelector("svg"), petEmoji=document.getElementById("petEmoji"), wrap=document.getElementById("wrap");
+const avatars={cat:"",fox:"🦊",dog:"🐶",panda:"🐼",rabbit:"🐰",robot:"🤖",ghost:"👻",frog:"🐸"};
 let down=null, dragged=false;
 pet.addEventListener("pointerdown",e=>{down={x:e.screenX,y:e.screenY,wx:window.screenX,wy:window.screenY};dragged=false;pet.setPointerCapture(e.pointerId);});
 pet.addEventListener("pointermove",e=>{if(!down||!(e.buttons&1))return;const dx=e.screenX-down.x,dy=e.screenY-down.y;if(Math.abs(dx)+Math.abs(dy)>4)dragged=true;if(dragged)window.desktop?.movePet(down.wx+dx,down.wy+dy);});
 pet.addEventListener("pointerup",()=>{if(down&&!dragged)window.desktop?.openChat();down=null;});
 window.desktop?.onUnreadCount(count=>{if(count>0){badge.style.display="flex";badge.textContent=count>99?"99+":String(count);}else badge.style.display="none";});
+window.desktop?.onPetSettings(settings=>{
+  const size=Math.max(64,Math.min(144,Number(settings?.size)||88));
+  document.documentElement.style.setProperty("--pet-size",size+"px");
+  wrap.style.width=(size+16)+"px";wrap.style.height=(size+32)+"px";
+  const avatar=avatars[settings?.avatar]===undefined?"cat":settings.avatar;
+  if(avatar==="cat"){svg.style.display="block";petEmoji.style.display="none";}
+  else{svg.style.display="none";petEmoji.style.display="block";petEmoji.textContent=avatars[avatar];}
+  pet.classList.toggle("no-animation",settings?.animate===false);
+});
 </script></body></html>
