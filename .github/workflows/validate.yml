@@ -21,10 +21,29 @@ jobs:
         env:
           VITE_API_URL: https://personal-messenger-api.onrender.com
         run: npm run build:ui
+      - name: Install backend dependencies
+        run: npm --prefix server install
       - name: Check backend and Electron syntax
         run: |
           node --check server/index.js
+          node --check server/smoke-test.js
           node --check electron/main.cjs
           node --check electron/preload.cjs
+      - name: Run backend real-time smoke test
+        env:
+          PORT: 4000
+          NODE_ENV: test
+          JWT_SECRET: pocketchat-ci-secret-please-use-only-for-tests
+          MONGOMS_VERSION: 7.0.14
+        run: |
+          node server/index.js > /tmp/pocketchat-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/api/health > /dev/null; then break; fi
+            sleep 2
+          done
+          if ! curl -fsS http://127.0.0.1:4000/api/health; then cat /tmp/pocketchat-server.log; exit 1; fi
+          node server/smoke-test.js
       - name: Check floating pet script syntax
         run: node -e "const fs=require('fs'); const html=fs.readFileSync('electron/pet.html','utf8'); const match=html.match(/<script>([\\s\\S]*?)<\\/script>/i); if(!match) throw new Error('Pet script missing'); new Function(match[1]); console.log('Pet script syntax OK');"
