@@ -585,6 +585,33 @@ const io = new Server(server, { cors: { origin: corsOrigin, methods: ["GET", "PO
 
 const onlineUsers = new Set();
 
+// Sweep expired messages centrally so both participants lose them even if neither
+// has the chat open. The deletion event keeps active clients in sync.
+const expirySweep = setInterval(async () => {
+  try {
+    const now = new Date();
+    const expired = await Message.find({ deleteAt: { $ne: null, $lte: now } }).select("_id conversationId").limit(1000);
+    if (!expired.length) return;
+    const grouped = new Map();
+    for (const message of expired) {
+      const conversationId = message.conversationId.toString();
+      if (!grouped.has(conversationId)) grouped.set(conversationId, []);
+      grouped.get(conversationId).push(message._id.toString());
+    }
+    await Message.deleteMany({ _id: { $in: expired.map(message => message._id) }, deleteAt: { $ne: null, $lte: now } });
+    for (const [conversationId, messageIds] of grouped) {
+      const conversation = await Conversation.findById(conversationId).select("participants");
+      if (!conversation) continue;
+      const room = conversation.participants.map(id => id.toString());
+      io.to(room[0]).to(room[1]).emit("message:deleted", { conversationId, messageIds, reason: "expired" });
+      await Promise.all(room.map(publishUnreadCount));
+    }
+  } catch (err) {
+    console.error("[messages] expiry sweep failed", err);
+  }
+}, 5000);
+expirySweep.unref?.();
+
 async function notifyFriendsPresence(userId, online) {
   try {
     const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: userId }, { recipientId: userId }] }).select("senderId recipientId");
