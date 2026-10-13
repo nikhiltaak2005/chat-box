@@ -397,6 +397,7 @@ app.patch("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, res
     const isDisabled = Boolean(req.body?.isDisabled);
     const user = await User.findByIdAndUpdate(req.params.userId, { $set: { isDisabled } }, { new: true }).select("username isDisabled");
     if (!user) return res.status(404).json({ error: "User not found." });
+    if (user.isDisabled) io.in(user._id.toString()).disconnectSockets(true);
     return res.json({ id: user._id.toString(), username: user.username, isDisabled: user.isDisabled });
   } catch (err) { return next(err); }
 });
@@ -408,6 +409,7 @@ app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, re
     if (!user) return res.status(404).json({ error: "User not found." });
     const conversations = await Conversation.find({ participants: user._id }).select("_id");
     const conversationIds = conversations.map(c => c._id);
+    io.in(user._id.toString()).disconnectSockets(true);
     await Message.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }, { conversationId: { $in: conversationIds } }] });
     await Conversation.deleteMany({ _id: { $in: conversationIds } });
     await FriendRequest.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }] });
@@ -492,11 +494,17 @@ async function notifyFriendsPresence(userId, online) {
   } catch (err) { console.error("[presence] broadcast failed", err); }
 }
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const payload = verifyToken(socket.handshake.auth?.token);
   if (!payload) return next(new Error("Not authorized"));
-  socket.userId = payload.id;
-  return next();
+  try {
+    const user = await User.findById(payload.id).select("isDisabled");
+    if (!user || user.isDisabled) return next(new Error("Account unavailable"));
+    socket.userId = payload.id;
+    return next();
+  } catch (err) {
+    return next(new Error("Authentication could not be verified"));
+  }
 });
 
 io.on("connection", (socket) => {
