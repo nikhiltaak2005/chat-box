@@ -67,6 +67,10 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   const loadedPreferences = await req("/api/preferences", { token: alice.token });
   if (loadedPreferences.preferences.appearance.accentColor !== "#00aa88") throw new Error("preferences were not persisted");
   console.log("PASS account preferences save and reload");
+  const mutePrefs = await req("/api/preferences", { method: "PATCH", token: alice.token, body: { notifications: { mutedContacts: [bob.user.id, "not-an-id"] } } });
+  if (mutePrefs.preferences.notifications.mutedContacts.length !== 1 || mutePrefs.preferences.notifications.mutedContacts[0] !== bob.user.id) throw new Error("muted contacts were not validated");
+  await req("/api/preferences", { method: "PATCH", token: alice.token, body: { notifications: { mutedContacts: [] } } });
+  console.log("PASS per-contact mute preferences are validated");
 
   await req("/api/friends/request", { method: "POST", token: alice.token, body: { username: b } });
   const bobRequests = await req("/api/friends", { token: bob.token });
