@@ -19,13 +19,17 @@ const ALLOWED_ORIGINS = new Set([
   "http://127.0.0.1:5173"
 ]);
 
-const JWT_SECRET =
-  process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 16
-    ? process.env.JWT_SECRET
-    : "dev-only-insecure-secret-change-me-32-chars";
+const configuredJwtSecret = String(process.env.JWT_SECRET || "").trim();
+const productionRuntime = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
+if (productionRuntime && (configuredJwtSecret.length < 16 || configuredJwtSecret.startsWith("dev-only"))) {
+  throw new Error("Production requires a private JWT_SECRET with at least 16 characters. Configure it in the hosting environment.");
+}
+const JWT_SECRET = configuredJwtSecret.length >= 16
+  ? configuredJwtSecret
+  : "dev-only-insecure-secret-change-me-32-chars";
 
-if (JWT_SECRET.startsWith("dev-only")) {
-  console.warn("[warn] Using the development JWT secret. Set JWT_SECRET in server/.env before deploying.");
+if (!productionRuntime && JWT_SECRET.startsWith("dev-only")) {
+  console.warn("[warn] Using the development JWT secret. Configure JWT_SECRET before deploying.");
 }
 
 // Allow browser clients from the configured UI origin, and non-browser clients
