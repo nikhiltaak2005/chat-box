@@ -50,6 +50,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCenterOpen, setSettingsCenterOpen] = useState(false);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
+  const preferencesRef = useRef(preferences);
   const [autoDeleteSeconds, setAutoDeleteSeconds] = useState(0);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
@@ -63,6 +64,7 @@ export default function App() {
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { visibleRef.current = chatVisible; }, [chatVisible]);
+  useEffect(() => { preferencesRef.current = preferences; }, [preferences]);
 
   useEffect(() => { window.desktop?.setAlwaysOnTop(true); }, []);
   useEffect(() => {
@@ -147,9 +149,9 @@ export default function App() {
       });
       if (msg.senderId !== me.id) {
         // Notifications never mark a message as read. Preferences are account-synced.
-        if ((!visibleRef.current || !isCurrentConversation) && preferences.notifications.enabled && !isQuietNow(preferences.notifications)) {
-          const preview = preferences.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferences.notifications.preview === "sender" ? ("New message from " + (activeRef.current?.username || "a contact")) : "You received a new message.";
-          window.desktop?.notifyIncoming(preview, { sound: preferences.notifications.sound });
+        if ((!visibleRef.current || !isCurrentConversation) && preferencesRef.current.notifications.enabled && !isQuietNow(preferencesRef.current.notifications)) {
+          const preview = preferencesRef.current.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferencesRef.current.notifications.preview === "sender" ? ("New message from " + (activeRef.current?.username || "a contact")) : "You received a new message.";
+          window.desktop?.notifyIncoming(preview, { sound: preferencesRef.current.notifications.sound });
         }
       }
       setContacts(prev => {
@@ -176,7 +178,7 @@ export default function App() {
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [token, me, preferences]);
+  }, [token, me]);
 
   useEffect(() => {
     const conversationId = active?.conversationId;
