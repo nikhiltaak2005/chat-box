@@ -57,7 +57,6 @@ const conversationSchema = new Schema(
   {
     participants: { type: [Schema.Types.ObjectId], required: true, index: true },
     key: { type: String, required: true, unique: true },
-    autoDeleteSeconds: { type: Number, default: 0, enum: [0, -1, 5, 60, 3600, 86400] }
   },
   { timestamps: true }
 );
@@ -125,7 +124,7 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
   }
   if (["full", "sender", "hidden"].includes(notifications.preview)) result.notifications.preview = notifications.preview;
   for (const key of ["quietStart", "quietEnd"]) {
-    if (typeof notifications[key] === "string" && /^([01]\\d|2[0-3]):[0-5]\\d$/.test(notifications[key])) result.notifications[key] = notifications[key];
+    if (typeof notifications[key] === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(notifications[key])) result.notifications[key] = notifications[key];
   }
   const privacy = source.privacy || {};
   for (const key of ["readReceipts", "showOnline"]) {
@@ -409,20 +408,6 @@ app.get("/api/users", requireAuth, async (req, res, next) => {
   }
 });
 
-app.patch("/api/conversations/:conversationId/settings", requireAuth, async (req, res, next) => {
-  try {
-    const seconds = Number(req.body?.autoDeleteSeconds);
-    if (![0, -1, 5, 60, 3600, 86400].includes(seconds)) return res.status(400).json({ error: "Invalid auto-delete setting." });
-    const conversation = await Conversation.findById(req.params.conversationId);
-    if (!conversation) return res.status(404).json({ error: "Conversation not found." });
-    if (!conversation.participants.some(id => id.toString() === req.userId)) return res.status(403).json({ error: "Not a participant in this conversation." });
-    conversation.autoDeleteSeconds = seconds;
-    await conversation.save();
-    io.to(conversation.participants[0].toString()).to(conversation.participants[1].toString()).emit("conversation:settings", { conversationId: conversation._id.toString(), autoDeleteSeconds: seconds });
-    return res.json({ autoDeleteSeconds: seconds });
-  } catch (err) { return next(err); }
-});
-
 app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
   try {
     const { personId } = req.params;
@@ -446,7 +431,6 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
       conversation: {
         _id: conversation._id.toString(),
         participants: conversation.participants.map((id) => id.toString()),
-        autoDeleteSeconds: Number(conversation.autoDeleteSeconds || 0)
       },
       messages: messages.map(message => serializeMessage(message, hidePeerReadReceipts && message.senderId.toString() === req.userId))
     });
@@ -559,9 +543,8 @@ io.on("connection", (socket) => {
     }
   });
 
-  // A message is considered seen only when the recipient has the conversation open
-  // and the renderer explicitly confirms it. Seen messages are then deleted for
-  // both participants, keeping all devices consistent.
+  // The renderer only sends this event when the correct chat is open and visible.
+  // Reading updates unread state; it never deletes messages.
   socket.on("message:read", async (payload, ack) => {
     const respond = typeof ack === "function" ? ack : () => {};
     try {
