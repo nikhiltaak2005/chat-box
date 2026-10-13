@@ -27,7 +27,11 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
   const [deviceDraft, setDeviceDraft] = useState(() => ({ ...DEFAULT_DEVICE_PREFERENCES, ...(devicePreferences || {}), pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(devicePreferences?.pet || {}) } }));
   const [notice, setNotice] = useState("");
   const patch = (section, key, next) => setDraft(prev => ({ ...prev, [section]: { ...prev[section], [key]: next } }));
-  const reset = () => { setDraft(mergePreferences(DEFAULT_PREFERENCES)); setNotice("Defaults restored. Save to apply them."); };
+  const reset = () => {
+    setDraft(mergePreferences(DEFAULT_PREFERENCES));
+    setDeviceDraft({ ...DEFAULT_DEVICE_PREFERENCES, pet: { ...DEFAULT_DEVICE_PREFERENCES.pet } });
+    setNotice("Defaults restored. Save to apply them.");
+  };
   const save = async () => {
     setNotice("");
     try { await onSave(draft, deviceDraft); setNotice("Settings saved."); }
@@ -72,7 +76,7 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
             <label className="settings-toggle"><span><strong>Pet animation</strong><small>Enable hover movement and playful feedback.</small></span><input type="checkbox" checked={deviceDraft.pet.animate} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,animate:e.target.checked}}))}/></label>
             <label className="settings-toggle"><span><strong>Start with Windows</strong><small>Launch PocketChat when you sign in to Windows.</small></span><input type="checkbox" checked={deviceDraft.launchAtStartup} onChange={e=>setDeviceDraft(prev=>({...prev,launchAtStartup:e.target.checked}))}/></label>
           </div>}
-          {tab === "privacy" && <div className="settings-section"><h3>Privacy</h3><p className="muted">These choices will be enforced by the service wherever the feature is supported.</p>
+          {tab === "privacy" && <div className="settings-section"><h3>Privacy</h3><p className="muted">These choices control read receipts, presence visibility and the profile details other users can see.</p>
             <label className="settings-toggle"><span><strong>Read receipts</strong><small>Let people know when you have read their messages.</small></span><input type="checkbox" checked={privacy.readReceipts} onChange={e=>patch("privacy","readReceipts",e.target.checked)}/></label>
             <label className="settings-toggle"><span><strong>Share online status</strong><small>Allow contacts to see when you are online, where presence is available.</small></span><input type="checkbox" checked={privacy.showOnline} onChange={e=>patch("privacy","showOnline",e.target.checked)}/></label>
             <Field label="Last seen visibility"><select className="setting-select" value={privacy.lastSeen} onChange={e=>patch("privacy","lastSeen",e.target.value)}><option value="everyone">Everyone</option><option value="contacts">Accepted contacts</option><option value="nobody">Nobody</option></select></Field>
