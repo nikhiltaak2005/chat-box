@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 import EmojiPicker from "emoji-picker-react";
 import MediaPicker from "./MediaPicker.jsx";
 import SettingsCenter, { DEFAULT_DEVICE_PREFERENCES, DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon, LockKeyhole } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon, LockKeyhole, Bell, BellOff } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -100,6 +100,23 @@ export default function App() {
     request("/api/preferences", token).then(data => setPreferences(data.preferences || DEFAULT_PREFERENCES)).catch(e => setError(e.message));
   }, [token, me]);
 
+  async function toggleContactMute(personId) {
+    const current = preferencesRef.current;
+    const muted = new Set(current.notifications.mutedContacts || []);
+    if (muted.has(personId)) muted.delete(personId); else muted.add(personId);
+    await savePreferences({ ...current, notifications: { ...current.notifications, mutedContacts: [...muted] } });
+  }
+
+  async function revokeAllSessions() {
+    await request("/api/sessions/revoke-all", token, { method: "POST" });
+    logout();
+  }
+
+  async function deleteAccount(password) {
+    await request("/api/account", token, { method: "DELETE", body: JSON.stringify({ password }) });
+    logout();
+  }
+
   async function savePreferences(next, nextDevicePreferences) {
     const data = await request("/api/preferences", token, { method: "PATCH", body: JSON.stringify(next) });
     setPreferences(data.preferences || next);
@@ -172,7 +189,7 @@ export default function App() {
         const nextRequests = friends.requests || [];
         const existingIds = new Set(friendRequestsRef.current.map(request => request.id));
         const newIncoming = nextRequests.filter(request => request.status === "pending" && request.recipientId === me.id && !existingIds.has(request.id));
-        if (peopleLoadedRef.current && newIncoming.length && !visibleRef.current && preferencesRef.current.notifications.enabled && preferencesRef.current.notifications.friendRequests && !isQuietNow(preferencesRef.current.notifications)) {
+        if (peopleLoadedRef.current && newIncoming.length && !visibleRef.current && preferencesRef.current.notifications.enabled && preferencesRef.current.notifications.friendRequests && !newIncoming.some(request => (preferencesRef.current.notifications.mutedContacts || []).includes(request.senderId)) && !isQuietNow(preferencesRef.current.notifications)) {
           const personName = newIncoming[0].person?.username || "someone";
           window.desktop?.notifyIncoming("New friend request from @" + personName, { sound: preferencesRef.current.notifications.sound });
         }
@@ -226,7 +243,7 @@ export default function App() {
       });
       if (msg.senderId !== me.id) {
         // Notifications never mark a message as read. Preferences are account-synced.
-        if ((!visibleRef.current || !isCurrentConversation) && preferencesRef.current.notifications.enabled && !isQuietNow(preferencesRef.current.notifications)) {
+        if ((!visibleRef.current || !isCurrentConversation) && preferencesRef.current.notifications.enabled && !(preferencesRef.current.notifications.mutedContacts || []).includes(msg.senderId) && !isQuietNow(preferencesRef.current.notifications)) {
           const preview = preferencesRef.current.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferencesRef.current.notifications.preview === "sender" ? "New message from a contact" : "You received a new message.";
           window.desktop?.notifyIncoming(preview, { sound: preferencesRef.current.notifications.sound });
         }
@@ -247,7 +264,7 @@ export default function App() {
         setMessages(prev => prev.map(message => message._id === payload.messageId ? { ...message, reactions: payload.reactions || [] } : message));
       }
       const prefs = preferencesRef.current;
-      if (payload?.messageSenderId === me.id && payload.actorId !== me.id && prefs.notifications.enabled && prefs.notifications.reactions && (!visibleRef.current || payload.conversationId !== activeRef.current?.conversationId) && !isQuietNow(prefs.notifications)) {
+      if (payload?.messageSenderId === me.id && payload.actorId !== me.id && prefs.notifications.enabled && prefs.notifications.reactions && !(prefs.notifications.mutedContacts || []).includes(payload.actorId) && (!visibleRef.current || payload.conversationId !== activeRef.current?.conversationId) && !isQuietNow(prefs.notifications)) {
         window.desktop?.notifyIncoming("Someone reacted to your message.", { sound: prefs.notifications.sound });
       }
     });
@@ -450,7 +467,7 @@ export default function App() {
           <button className="icon-btn back" onClick={()=>setActive(null)}><ArrowLeft size={17}/></button>
           <div className="avatar">{active.avatarData ? <img src={active.avatarData} alt=""/> : (active.displayName || active.username).slice(0,1).toUpperCase()}</div>
           <div className="contact-meta"><strong>{active.displayName || active.username}</strong><small>@{active.username}</small></div>
-          <button className="icon-btn" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={15}/></button>
+          <button className="icon-btn" title={(preferences.notifications.mutedContacts || []).includes(active._id) ? "Unmute notifications for this contact" : "Mute notifications for this contact"} onClick={()=>toggleContactMute(active._id).catch(e=>setError(e.message))}>{(preferences.notifications.mutedContacts || []).includes(active._id) ? <BellOff size={15}/> : <Bell size={15}/>}</button><button className="icon-btn" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={15}/></button>
           <div className="online-dot" title={status}/>
         </div>
         <div className="messages">
@@ -478,7 +495,7 @@ export default function App() {
     {adminOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAdminOpen(false);}}><section className="profile-dialog admin-dialog"><div className="profile-heading"><div><p className="eyebrow">OWNER CONTROLS</p><h2>User management</h2></div><button type="button" className="icon-btn" onClick={()=>setAdminOpen(false)}><X size={17}/></button></div><p className="muted">Disable an account to block access, or permanently delete its account, messages, conversations and friend requests.</p><div className="admin-user-list">{adminUsers.map(u=><div className="admin-user" key={u.id}><div className="contact-meta"><strong>{u.displayName||u.username} {u.role==="admin"?"· ADMIN":""}</strong><small>@{u.username} · {u.isDisabled?"Disabled":"Active"}</small></div>{u.role!=="admin" && <><button className="icon-btn" title={u.isDisabled?"Enable":"Disable"} onClick={()=>adminDisableUser(u.id,u.isDisabled)}>{u.isDisabled?"✓":"⏸"}</button><button className="icon-btn" title="Delete user and chats" onClick={()=>adminDeleteUser(u.id,u.username)}>🗑</button></>}</div>)}</div><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>request("/api/admin/storage/expired",token,{method:"DELETE"}).then(d=>setError("Expired messages cleaned: "+d.deletedMessages)).catch(e=>setError(e.message))}>Clean expired messages</button><button type="button" className="primary-btn" onClick={()=>setAdminOpen(false)}>Done</button></div></section></div>}
     {updateOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setUpdateOpen(false);}}><section className="profile-dialog"><div className="profile-heading"><div><p className="eyebrow">POCKETCHAT</p><h2>Software updates</h2></div><button type="button" className="icon-btn" onClick={()=>setUpdateOpen(false)}><X size={17}/></button></div><div className="update-status-icon">{updateInfo.status==="current" ? <CheckCircle2 size={28}/> : updateInfo.status==="downloaded" ? <CheckCircle2 size={28}/> : <Download size={28}/>}</div><strong className="update-status-title">{updateInfo.message || "Check for updates"}</strong>{updateInfo.version && <p className="muted">Version {updateInfo.version}</p>}{updateInfo.status==="downloading" && <div className="update-progress"><span style={{width:`${updateInfo.percent || 0}%`}}/></div>}{updateInfo.status==="error" && <p className="error-text">Please check your internet connection and try again.</p>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setUpdateOpen(false)}>Close</button><button type="button" className="primary-btn" disabled={updateBusy || ["checking","downloading","current","dev"].includes(updateInfo.status)} onClick={runUpdateAction}>{updateBusy ? "Please wait…" : updateInfo.status==="downloaded" ? "Install and restart" : updateInfo.status==="available" ? "Download update" : updateInfo.status==="downloading" ? "Downloading…" : updateInfo.status==="current" ? "Up to date" : updateInfo.status==="dev" ? "Installed app only" : "Check for updates"}</button></div>{updateInfo.status==="current" && <button type="button" className="text-btn" onClick={runUpdateAction}>Check again</button>}{updateInfo.status==="dev" && <p className="muted">The update service works in the installed app, not in the development window.</p>}</section></div>}
     {appLocked && <div className="app-lock-overlay"><form className="app-lock-card" onSubmit={unlockApp}><div className="lock-icon"><LockKeyhole size={25}/></div><p className="eyebrow">POCKETCHAT LOCKED</p><h2>Welcome back.</h2><p className="muted">Enter your account password to unlock this device.</p><label>Password<input type="password" autoFocus autoComplete="current-password" value={unlockPassword} onChange={e=>setUnlockPassword(e.target.value)} required/></label>{unlockError && <div className="error-text">{unlockError}</div>}<button className="primary-btn" type="submit" disabled={unlockBusy}>{unlockBusy ? "Unlocking…" : "Unlock PocketChat"}</button></form></div>}
-    {settingsCenterOpen && <SettingsCenter value={preferences} devicePreferences={devicePreferences} onSave={savePreferences} onClose={()=>setSettingsCenterOpen(false)} />}
+    {settingsCenterOpen && <SettingsCenter value={preferences} devicePreferences={devicePreferences} user={me} onSave={savePreferences} onRevokeAll={revokeAllSessions} onDeleteAccount={deleteAccount} onClose={()=>setSettingsCenterOpen(false)} />}
     {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;
 }
