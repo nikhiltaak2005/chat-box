@@ -449,15 +449,25 @@ app.get("/api/users", requireAuth, async (req, res, next) => {
   }
 });
 
+const giphyCache = new Map();
+let giphyWindowStart = Date.now();
+let giphyRequestCount = 0;
 app.get("/api/media/giphy", requireAuth, async (req, res) => {
   const apiKey = String(process.env.GIPHY_API_KEY || "").trim();
   if (!apiKey) return res.status(503).json({ error: "GIF and sticker search is not configured yet. Add GIPHY_API_KEY to the backend environment." });
   const type = req.query.type === "sticker" ? "sticker" : "gif";
   const query = String(req.query.q || "").trim().slice(0, 50);
+  const cacheKey = type + ":" + query.toLowerCase();
+  const cached = giphyCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 60_000) return res.json(cached.data);
+  if (Date.now() - giphyWindowStart >= 60 * 60 * 1000) { giphyWindowStart = Date.now(); giphyRequestCount = 0; }
+  const maxCalls = Math.max(10, Number(process.env.GIPHY_MAX_REQUESTS_PER_HOUR) || 90);
+  if (giphyRequestCount >= maxCalls) return res.status(429).json({ error: "GIF search limit reached for this hour. Try again later." });
   const endpoint = type === "sticker" ? "stickers" : "gifs";
   const params = new URLSearchParams({ api_key: apiKey, limit: "24", rating: "g" });
   if (query) params.set("q", query);
   try {
+    giphyRequestCount += 1;
     const response = await fetch("https://api.giphy.com/v1/" + endpoint + (query ? "/search" : "/trending") + "?" + params.toString());
     if (!response.ok) return res.status(response.status === 429 ? 429 : 502).json({ error: response.status === 429 ? "GIF provider rate limit reached. Try again shortly." : "GIF provider is temporarily unavailable." });
     const payload = await response.json();
@@ -468,7 +478,10 @@ app.get("/api/media/giphy", requireAuth, async (req, res) => {
       if (!full.startsWith("https://") || !preview.startsWith("https://")) return null;
       return { id: String(item.id), title: String(item.title || ""), mediaUrl: full, previewUrl: preview, width: Number(images.fixed_width?.width || images.original?.width || 0), height: Number(images.fixed_width?.height || images.original?.height || 0) };
     }).filter(Boolean);
-    return res.json({ provider: "GIPHY", results });
+    const data = { provider: "GIPHY", results };
+    giphyCache.set(cacheKey, { createdAt: Date.now(), data });
+    if (giphyCache.size > 100) giphyCache.delete(giphyCache.keys().next().value);
+    return res.json(data);
   } catch (err) {
     console.error("[media] GIPHY request failed", err.message);
     return res.status(502).json({ error: "Could not reach the GIF provider. Try again later." });
