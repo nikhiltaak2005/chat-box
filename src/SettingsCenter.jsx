@@ -61,7 +61,24 @@ export default function SettingsCenter({ value, devicePreferences, user, onSave,
         const data = JSON.parse(String(reader.result || ""));
         if (data.version !== 1 || !data.accountPreferences || !data.devicePreferences) throw new Error("Unsupported settings file.");
         setDraft(mergePreferences(data.accountPreferences));
-        setDeviceDraft({ ...DEFAULT_DEVICE_PREFERENCES, ...data.devicePreferences, pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(data.devicePreferences.pet || {}) } });
+        const importedDevice = data.devicePreferences || {};
+        const importedPet = importedDevice.pet || {};
+        const customAvatarData = typeof importedPet.customAvatarData === "string" && importedPet.customAvatarData.length <= 1500000 && /^data:image\/(png|jpeg|webp);base64,/i.test(importedPet.customAvatarData) ? importedPet.customAvatarData : "";
+        const allowedAvatars = ["cat", "fox", "dog", "panda", "rabbit", "robot", "ghost", "frog", "custom"];
+        const allowedTimeouts = [1, 5, 10, 15, 30];
+        setDeviceDraft({
+          launchAtStartup: importedDevice.launchAtStartup === true,
+          appLockEnabled: importedDevice.appLockEnabled === true,
+          appLockTimeoutMinutes: allowedTimeouts.includes(Number(importedDevice.appLockTimeoutMinutes)) ? Number(importedDevice.appLockTimeoutMinutes) : 5,
+          pet: {
+            avatar: allowedAvatars.includes(importedPet.avatar) && (importedPet.avatar !== "custom" || customAvatarData) ? importedPet.avatar : "cat",
+            customAvatarData,
+            size: Number.isFinite(Number(importedPet.size)) ? Math.max(64, Math.min(144, Math.round(Number(importedPet.size) / 8) * 8)) : 88,
+            opacity: Number.isFinite(Number(importedPet.opacity)) ? Math.max(40, Math.min(100, Number(importedPet.opacity))) : 100,
+            alwaysOnTop: importedPet.alwaysOnTop !== false,
+            animate: importedPet.animate !== false
+          }
+        });
         setNotice("Settings imported. Press Save settings to apply them.");
       } catch (error) { setNotice(error.message || "Invalid settings file."); }
     };
