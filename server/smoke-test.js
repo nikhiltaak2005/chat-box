@@ -23,11 +23,17 @@ function connect(token) {
   });
 }
 
-function waitForMessage(socket, ms = 5000) {
-  return Promise.race([
-    new Promise((resolve) => socket.once("message:new", resolve)),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout waiting for message:new")), ms))
-  ]);
+function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { socket.off(event, listener); reject(new Error("timeout waiting for " + event)); }, ms);
+    const listener = payload => {
+      if (!predicate(payload)) return;
+      clearTimeout(timer);
+      socket.off(event, listener);
+      resolve(payload);
+    };
+    socket.on(event, listener);
+  });
 }
 
 (async () => {
@@ -53,6 +59,22 @@ function waitForMessage(socket, ms = 5000) {
   if (login.user.id !== alice.user.id) throw new Error("login returned a different user");
   console.log("PASS POST /api/auth/login");
 
+  const savedPreferences = await req("/api/preferences", {
+    method: "PATCH", token: alice.token,
+    body: { appearance: { accentColor: "#00aa88", theme: "dark" } }
+  });
+  if (savedPreferences.preferences.appearance.accentColor !== "#00aa88") throw new Error("preferences were not saved");
+  const loadedPreferences = await req("/api/preferences", { token: alice.token });
+  if (loadedPreferences.preferences.appearance.accentColor !== "#00aa88") throw new Error("preferences were not persisted");
+  console.log("PASS account preferences save and reload");
+
+  await req("/api/friends/request", { method: "POST", token: alice.token, body: { username: b } });
+  const bobRequests = await req("/api/friends", { token: bob.token });
+  const incoming = bobRequests.requests.find(r => r.senderId === alice.user.id && r.status === "pending");
+  if (!incoming) throw new Error("friend request not visible to recipient");
+  await req("/api/friends/" + incoming.id, { method: "PATCH", token: bob.token, body: { action: "accept" } });
+  console.log("PASS friend request and acceptance");
+
   const conv = await req(`/api/conversations/${bob.user.id}`, { token: alice.token });
   if (!conv.conversation || !conv.conversation._id) throw new Error("no conversation id returned");
   console.log("PASS GET /api/conversations/:id ->", conv.conversation._id, "(messages:", conv.messages.length + ")");
@@ -61,21 +83,47 @@ function waitForMessage(socket, ms = 5000) {
   const bobSocket = await connect(bob.token);
   console.log("PASS sockets connected");
 
-  const incoming = waitForMessage(bobSocket);
+  const incomingMessage = waitForEvent(bobSocket, "message:new", m => m.body === "hello from smoke test");
   const ack = await new Promise((resolve) =>
     aliceSocket.emit("message:send", { conversationId: conv.conversation._id, body: "hello from smoke test" }, resolve)
   );
   if (ack && ack.error) throw new Error("ack error: " + ack.error);
   console.log("PASS message:send ack ->", ack.message._id);
 
-  const received = await incoming;
-  if (received.body !== "hello from smoke test") throw new Error("unexpected body: " + received.body);
+  const received = await incomingMessage;
   if (received.senderId !== alice.user.id) throw new Error("senderId mismatch");
   console.log("PASS message:new delivered to recipient");
 
-  const history = await req(`/api/conversations/${alice.user.id}`, { token: bob.token });
-  if (!history.messages.find((m) => m._id === ack.message._id)) throw new Error("message not persisted");
-  console.log("PASS persistence ->", history.messages.length, "message(s) in history");
+  const readReceipt = waitForEvent(aliceSocket, "message:read", p => (p.messageIds || []).includes(ack.message._id));
+  const readAck = await new Promise(resolve => bobSocket.emit("message:read", { conversationId: conv.conversation._id }, resolve));
+  if (readAck?.error) throw new Error("read ack error: " + readAck.error);
+  await readReceipt;
+  const afterRead = await req(`/api/conversations/${alice.user.id}`, { token: bob.token });
+  if (!afterRead.messages.find(m => m._id === ack.message._id)) throw new Error("reading a message deleted it unexpectedly");
+  console.log("PASS read receipt sync and manual-retention rule");
+
+  const hiddenIncoming = waitForEvent(bobSocket, "message:new", m => m.body === "delete for me test");
+  const hiddenAck = await new Promise(resolve => aliceSocket.emit("message:send", { conversationId: conv.conversation._id, body: "delete for me test" }, resolve));
+  if (hiddenAck?.error) throw new Error(hiddenAck.error);
+  await hiddenIncoming;
+  const hiddenEvent = waitForEvent(aliceSocket, "message:hidden", p => (p.messageIds || []).includes(hiddenAck.message._id));
+  const hideAck = await new Promise(resolve => aliceSocket.emit("message:delete", { messageId: hiddenAck.message._id, scope: "me" }, resolve));
+  if (hideAck?.error) throw new Error(hideAck.error);
+  await hiddenEvent;
+  const aliceHistory = await req(`/api/conversations/${bob.user.id}`, { token: alice.token });
+  const bobHistory = await req(`/api/conversations/${alice.user.id}`, { token: bob.token });
+  if (aliceHistory.messages.some(m => m._id === hiddenAck.message._id)) throw new Error("Delete for me did not hide the message");
+  if (!bobHistory.messages.some(m => m._id === hiddenAck.message._id)) throw new Error("Delete for me removed the other user's copy");
+  console.log("PASS Delete for me is per-user");
+
+  const deletedOnBob = waitForEvent(bobSocket, "message:deleted", p => (p.messageIds || []).includes(ack.message._id));
+  const deletedOnAlice = waitForEvent(aliceSocket, "message:deleted", p => (p.messageIds || []).includes(ack.message._id));
+  const deleteAck = await new Promise(resolve => aliceSocket.emit("message:delete", { messageId: ack.message._id, scope: "everyone" }, resolve));
+  if (deleteAck?.error) throw new Error(deleteAck.error);
+  await Promise.all([deletedOnBob, deletedOnAlice]);
+  const finalHistory = await req(`/api/conversations/${bob.user.id}`, { token: bob.token });
+  if (finalHistory.messages.some(m => m._id === ack.message._id)) throw new Error("Delete for everyone did not remove the message");
+  console.log("PASS Delete for everyone syncs to both participants");
 
   aliceSocket.close();
   bobSocket.close();
