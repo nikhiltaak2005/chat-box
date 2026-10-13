@@ -118,11 +118,15 @@ ipcMain.on("pet:move", (_event, x, y) => {
   petWindow.setPosition(nx, ny);
 });
 ipcMain.on("pet:open-chat", showChat);
-ipcMain.on("notification:incoming", (_event, body) => {
+ipcMain.on("notification:incoming", (_event, body, options = {}) => {
   // The badge is driven by the server's unread:count event, never incremented locally.
   if (chatWindow && chatWindow.isVisible()) return;
   if (Notification.isSupported()) {
-    new Notification({ title: "PocketChat", body: typeof body === "string" && body ? body.slice(0, 180) : "You received a new message." }).show();
+    new Notification({
+      title: "PocketChat",
+      body: typeof body === "string" && body ? body.slice(0, 180) : "You received a new message.",
+      silent: options?.sound === false
+    }).show();
   }
 });
 ipcMain.on("unread:set-count", (_event, count) => setUnreadCount(count));
