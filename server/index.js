@@ -70,7 +70,8 @@ const messageSchema = new Schema(
     body: { type: String, required: true, trim: true, maxlength: 4000 },
     replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
     readAt: { type: Date, default: null, index: true },
-    deleteAt: { type: Date, default: null, index: true }
+    deleteAt: { type: Date, default: null, index: true },
+    hiddenFor: { type: [Schema.Types.ObjectId], default: [] }
   },
   { timestamps: true }
 );
@@ -153,7 +154,7 @@ function isValidId(value) {
   return typeof value === "string" && mongoose.Types.ObjectId.isValid(value);
 }
 
-function serializeMessage(m) {
+function serializeMessage(m, hideReadAt = false) {
   return {
     _id: m._id.toString(),
     conversationId: m.conversationId.toString(),
@@ -162,13 +163,13 @@ function serializeMessage(m) {
     body: m.body,
     replyTo: m.replyTo ? m.replyTo.toString() : null,
     createdAt: m.createdAt,
-    readAt: m.readAt || null,
+    readAt: hideReadAt ? null : (m.readAt || null),
     deleteAt: m.deleteAt || null
   };
 }
 
 async function publishUnreadCount(userId) {
-  const count = await Message.countDocuments({ recipientId: userId, readAt: null });
+  const count = await Message.countDocuments({ recipientId: userId, readAt: null, hiddenFor: { $ne: userId } });
   io.to(userId.toString()).emit("unread:count", count);
   return count;
 }
@@ -428,7 +429,7 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     if (!isValidId(personId)) return res.status(400).json({ error: "Invalid person id." });
     if (personId === req.userId) return res.status(400).json({ error: "You cannot message yourself." });
 
-    const person = await User.findById(personId).select("username displayName");
+    const person = await User.findById(personId).select("username displayName preferences");
     if (!person || person.isDisabled) return res.status(404).json({ error: "Person not found." });
     const friendship = await FriendRequest.findOne({ status: "accepted", $or: [{ senderId: req.userId, recipientId: personId }, { senderId: personId, recipientId: req.userId }] });
     if (!friendship) return res.status(403).json({ error: "Accept a friend request before chatting." });
@@ -436,9 +437,10 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     const conversation = await findOrCreateConversation(req.userId, personId);
     if (!conversation) return res.status(500).json({ error: "Could not open conversation." });
 
-    const messages = await Message.find({ conversationId: conversation._id })
+    const messages = await Message.find({ conversationId: conversation._id, hiddenFor: { $ne: req.userId } })
       .sort({ createdAt: 1 })
       .limit(500);
+    const hidePeerReadReceipts = !normalizePreferences(person.preferences).privacy.readReceipts;
 
     return res.json({
       conversation: {
@@ -446,7 +448,7 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
         participants: conversation.participants.map((id) => id.toString()),
         autoDeleteSeconds: Number(conversation.autoDeleteSeconds || 0)
       },
-      messages: messages.map(serializeMessage)
+      messages: messages.map(message => serializeMessage(hidePeerReadReceipts && message.senderId.toString() === req.userId))
     });
   } catch (err) {
     return next(err);
@@ -464,16 +466,9 @@ app.use((err, _req, res, _next) => {
 // ---------------------------------------------------------------------------
 // HTTP + Socket.IO
 // ---------------------------------------------------------------------------
-setInterval(async () => {
-  try {
-    const expired = await Message.find({ deleteAt: { $ne: null, $lte: new Date() } }).select("_id conversationId");
-    if (!expired.length) return;
-    await Message.deleteMany({ _id: { $in: expired.map(message => message._id) } });
-    const grouped = new Map();
-    for (const message of expired) { const key = message.conversationId.toString(); if (!grouped.has(key)) grouped.set(key, []); grouped.get(key).push(message._id.toString()); }
-    for (const [conversationId, messageIds] of grouped) { const conversation = await Conversation.findById(conversationId).select("participants"); if (conversation) io.to(conversation.participants[0].toString()).to(conversation.participants[1].toString()).emit("message:deleted", { conversationId, messageIds }); }
-  } catch (err) { console.error("[cleanup] auto-delete failed", err); }
-}, 1000);
+// Message retention is manual. Expired-message cleanup is not scheduled.
+
+
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: corsOrigin, methods: ["GET", "POST"] } });
@@ -536,6 +531,34 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("message:delete", async (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    try {
+      const messageId = payload?.messageId;
+      const scope = String(payload?.scope || "");
+      if (!isValidId(messageId) || !["me", "everyone"].includes(scope)) return respond({ error: "Invalid delete request." });
+      const message = await Message.findById(messageId);
+      if (!message) return respond({ error: "Message no longer exists." });
+      const conversation = await Conversation.findById(message.conversationId);
+      if (!conversation || !conversation.participants.some(id => id.toString() === socket.userId)) return respond({ error: "Not a participant in this conversation." });
+      const participants = conversation.participants.map(id => id.toString());
+      if (scope === "everyone") {
+        if (message.senderId.toString() !== socket.userId) return respond({ error: "Only the sender can delete this message for everyone." });
+        await Message.deleteOne({ _id: message._id });
+        io.to(participants[0]).to(participants[1]).emit("message:deleted", { conversationId: message.conversationId.toString(), messageIds: [message._id.toString()] });
+        await Promise.all(participants.map(publishUnreadCount));
+      } else {
+        await Message.updateOne({ _id: message._id }, { $addToSet: { hiddenFor: socket.userId } });
+        io.to(socket.userId).emit("message:hidden", { conversationId: message.conversationId.toString(), messageIds: [message._id.toString()] });
+        await publishUnreadCount(socket.userId);
+      }
+      return respond({ ok: true });
+    } catch (err) {
+      console.error("[socket] message:delete failed", err);
+      return respond({ error: "Could not delete message." });
+    }
+  });
+
   // A message is considered seen only when the recipient has the conversation open
   // and the renderer explicitly confirms it. Seen messages are then deleted for
   // both participants, keeping all devices consistent.
@@ -556,18 +579,13 @@ io.on("connection", (socket) => {
       const readAt = new Date();
       await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId, readAt: null }, { $set: { readAt } });
 
-      // Send the read receipt before the deletion event; both are emitted in order.
-      io.to(participants[0]).to(participants[1]).emit("message:read", {
-        conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt
-      });
-      const deleteSeconds = Number(conversation.autoDeleteSeconds || 0);
-      if (deleteSeconds === -1) {
-        await Message.deleteMany({ _id: { $in: ids }, recipientId: socket.userId });
-        io.to(participants[0]).to(participants[1]).emit("message:deleted", { conversationId: conversationId.toString(), messageIds: idStrings });
-      } else if (deleteSeconds > 0) {
-        const deleteAt = new Date(Date.now() + deleteSeconds * 1000);
-        await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId }, { $set: { deleteAt } });
-        io.to(participants[0]).to(participants[1]).emit("message:read", { conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt, deleteAt });
+      // Read receipts are optional; message retention is always manual.
+      const reader = await User.findById(socket.userId).select("preferences");
+      const receiptsEnabled = normalizePreferences(reader?.preferences).privacy.readReceipts;
+      if (receiptsEnabled) {
+        io.to(participants[0]).to(participants[1]).emit("message:read", {
+          conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt
+        });
       }
       await publishUnreadCount(socket.userId);
       return respond({ ok: true, deletedIds: idStrings });
