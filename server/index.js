@@ -47,6 +47,7 @@ const userSchema = new Schema(
     username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24 },
     displayName: { type: String, trim: true, maxlength: 40, default: "" },
     avatarData: { type: String, default: "", maxlength: 1500000 },
+    preferences: { type: Schema.Types.Mixed, default: {} },
     passwordHash: { type: String, required: true }
   },
   { timestamps: true }
@@ -98,9 +99,45 @@ function verifyToken(token) {
   }
 }
 
+const DEFAULT_PREFERENCES = {
+  appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
+  notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
+  privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
+};
+
+function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
+  const source = input && typeof input === "object" ? input : {};
+  const result = {
+    appearance: { ...DEFAULT_PREFERENCES.appearance, ...(base.appearance || {}) },
+    notifications: { ...DEFAULT_PREFERENCES.notifications, ...(base.notifications || {}) },
+    privacy: { ...DEFAULT_PREFERENCES.privacy, ...(base.privacy || {}) }
+  };
+  const appearance = source.appearance || {};
+  if (["dark", "light", "system"].includes(appearance.theme)) result.appearance.theme = appearance.theme;
+  if (typeof appearance.accentColor === "string" && /^#[0-9a-f]{6}$/i.test(appearance.accentColor)) result.appearance.accentColor = appearance.accentColor;
+  if ([0.9, 1, 1.1, 1.2].includes(Number(appearance.fontScale))) result.appearance.fontScale = Number(appearance.fontScale);
+  if (["compact", "comfortable"].includes(appearance.density)) result.appearance.density = appearance.density;
+  if (["rounded", "soft", "square"].includes(appearance.bubbleStyle)) result.appearance.bubbleStyle = appearance.bubbleStyle;
+  const notifications = source.notifications || {};
+  for (const key of ["enabled", "sound", "friendRequests", "reactions", "quietHoursEnabled"]) {
+    if (typeof notifications[key] === "boolean") result.notifications[key] = notifications[key];
+  }
+  if (["full", "sender", "hidden"].includes(notifications.preview)) result.notifications.preview = notifications.preview;
+  for (const key of ["quietStart", "quietEnd"]) {
+    if (typeof notifications[key] === "string" && /^([01]\\d|2[0-3]):[0-5]\\d$/.test(notifications[key])) result.notifications[key] = notifications[key];
+  }
+  const privacy = source.privacy || {};
+  for (const key of ["readReceipts", "showOnline"]) {
+    if (typeof privacy[key] === "boolean") result.privacy[key] = privacy[key];
+  }
+  if (["everyone", "contacts", "nobody"].includes(privacy.lastSeen)) result.privacy.lastSeen = privacy.lastSeen;
+  if (["everyone", "contacts", "nobody"].includes(privacy.profileVisibility)) result.privacy.profileVisibility = privacy.profileVisibility;
+  return result;
+}
+
 // Shape returned to the client on login/register (client reads user.id).
 function publicSelf(user) {
-  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "", role: user.role || "user" };
+  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "", role: user.role || "user", preferences: normalizePreferences(user.preferences) };
 }
 
 // Shape returned by /api/users (client reads contact._id).
@@ -249,6 +286,25 @@ app.patch("/api/profile", requireAuth, async (req, res, next) => {
     if (err?.code === 11000) return res.status(409).json({ error: "That username is already taken." });
     return next(err);
   }
+});
+
+app.get("/api/preferences", requireAuth, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.userId).select("preferences");
+    if (!user) return res.status(404).json({ error: "User not found." });
+    return res.json({ preferences: normalizePreferences(user.preferences) });
+  } catch (err) { return next(err); }
+});
+
+app.patch("/api/preferences", requireAuth, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.userId).select("preferences");
+    if (!user) return res.status(404).json({ error: "User not found." });
+    const preferences = normalizePreferences(req.body, normalizePreferences(user.preferences));
+    user.preferences = preferences;
+    await user.save();
+    return res.json({ preferences });
+  } catch (err) { return next(err); }
 });
 
 function requireAdmin(req, res, next) {
