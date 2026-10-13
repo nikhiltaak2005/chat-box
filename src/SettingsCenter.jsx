@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { Bell, Palette, ShieldCheck, X, RotateCcw, Save } from "lucide-react";
+import { Bell, Palette, ShieldCheck, X, RotateCcw, Save, Image as ImageIcon } from "lucide-react";
 
 export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false };
 
 export const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
+  chat: { enterToSend: true, reactions: true, mediaEnabled: true },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
 };
 
@@ -13,6 +14,7 @@ function mergePreferences(value) {
   return {
     appearance: { ...DEFAULT_PREFERENCES.appearance, ...(value?.appearance || {}) },
     notifications: { ...DEFAULT_PREFERENCES.notifications, ...(value?.notifications || {}) },
+    chat: { ...DEFAULT_PREFERENCES.chat, ...(value?.chat || {}) },
     privacy: { ...DEFAULT_PREFERENCES.privacy, ...(value?.privacy || {}) }
   };
 }
@@ -40,11 +42,13 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
   const tabs = [
     { id: "appearance", label: "Appearance", icon: Palette },
     { id: "notifications", label: "Notifications", icon: Bell },
+    { id: "chat", label: "Chat & Media", icon: ImageIcon },
     { id: "privacy", label: "Privacy", icon: ShieldCheck },
     { id: "pet", label: "Pet & Desktop", icon: Bell }
   ];
   const appearance = draft.appearance;
   const notifications = draft.notifications;
+  const chat = draft.chat;
   const privacy = draft.privacy;
   return <div className="profile-overlay settings-overlay" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="PocketChat settings">
@@ -75,6 +79,12 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
             <label className="settings-toggle"><span><strong>Always on top</strong><small>Keep the floating pet above other windows.</small></span><input type="checkbox" checked={deviceDraft.pet.alwaysOnTop} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,alwaysOnTop:e.target.checked}}))}/></label>
             <label className="settings-toggle"><span><strong>Pet animation</strong><small>Enable hover movement and playful feedback.</small></span><input type="checkbox" checked={deviceDraft.pet.animate} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,animate:e.target.checked}}))}/></label>
             <label className="settings-toggle"><span><strong>Start with Windows</strong><small>Launch PocketChat when you sign in to Windows.</small></span><input type="checkbox" checked={deviceDraft.launchAtStartup} onChange={e=>setDeviceDraft(prev=>({...prev,launchAtStartup:e.target.checked}))}/></label>
+          </div>}
+          {tab === "chat" && <div className="settings-section"><h3>Chat & Media</h3><p className="muted">These account preferences sync with your other devices.</p>
+            <label className="settings-toggle"><span><strong>Enter to send</strong><small>When off, Enter inserts a new line and Ctrl+Enter sends.</small></span><input type="checkbox" checked={chat.enterToSend} onChange={e=>patch("chat","enterToSend",e.target.checked)}/></label>
+            <label className="settings-toggle"><span><strong>Message reactions</strong><small>Show quick reactions on messages.</small></span><input type="checkbox" checked={chat.reactions} onChange={e=>patch("chat","reactions",e.target.checked)}/></label>
+            <label className="settings-toggle"><span><strong>GIFs & stickers</strong><small>Allow browsing and sending media from GIPHY.</small></span><input type="checkbox" checked={chat.mediaEnabled} onChange={e=>patch("chat","mediaEnabled",e.target.checked)}/></label>
+            <div className="settings-note">GIF and sticker search uses GIPHY. Search terms are sent to GIPHY through the PocketChat backend; media requires a configured GIPHY API key.</div>
           </div>}
           {tab === "privacy" && <div className="settings-section"><h3>Privacy</h3><p className="muted">These choices control read receipts, presence visibility and the profile details other users can see.</p>
             <label className="settings-toggle"><span><strong>Read receipts</strong><small>Let people know when you have read their messages.</small></span><input type="checkbox" checked={privacy.readReceipts} onChange={e=>patch("privacy","readReceipts",e.target.checked)}/></label>
