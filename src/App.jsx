@@ -370,7 +370,7 @@ export default function App() {
   }
   const filtered = contacts.filter(c => `${c.username} ${c.displayName || ""}`.toLowerCase().includes(query.toLowerCase()));
 
-  return <div className={`app-shell theme-${preferences.appearance.theme} density-${preferences.appearance.density} bubbles-${preferences.appearance.bubbleStyle}`} style={{ "--accent": preferences.appearance.accentColor, "--font-scale": preferences.appearance.fontScale }}>
+  return <div className={`app-shell theme-${preferences.appearance.theme} density-${preferences.appearance.density} bubbles-${preferences.appearance.bubbleStyle}`} style={{ "--accent": preferences.appearance.accentColor, "--font-scale": preferences.appearance.fontScale, "--chat-wallpaper": preferences.appearance.wallpaperColor }}>
     <header className="titlebar">
       <div className="brand-mark"><MessageCircle size={16} /></div>
       <div className="brand-title">pocket<span>chat</span><small>{me ? status : "PERSONAL MESSENGER"}</small></div>
