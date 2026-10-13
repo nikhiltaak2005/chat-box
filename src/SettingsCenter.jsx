@@ -1,11 +1,11 @@
 import React, { useState } from "react";
-import { Bell, Palette, ShieldCheck, X, RotateCcw, Save, Image as ImageIcon } from "lucide-react";
+import { Bell, Palette, ShieldCheck, X, RotateCcw, Save, Image as ImageIcon, UserRound, Download, Upload, LogOut, Trash2 } from "lucide-react";
 
 export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false, appLockEnabled: false, appLockTimeoutMinutes: 5 };
 
 export const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
-  notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
+  notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00", mutedContacts: [] },
   chat: { enterToSend: true, reactions: true, mediaEnabled: true },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
 };
@@ -23,11 +23,13 @@ function Field({ label, description, children }) {
   return <label className="settings-field"><span className="settings-field-label">{label}</span>{description && <small>{description}</small>}{children}</label>;
 }
 
-export default function SettingsCenter({ value, devicePreferences, onSave, onClose, saving = false }) {
+export default function SettingsCenter({ value, devicePreferences, user, onSave, onClose, onRevokeAll, onDeleteAccount, saving = false }) {
   const [tab, setTab] = useState("appearance");
   const [draft, setDraft] = useState(() => mergePreferences(value));
   const [deviceDraft, setDeviceDraft] = useState(() => ({ ...DEFAULT_DEVICE_PREFERENCES, ...(devicePreferences || {}), pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(devicePreferences?.pet || {}) } }));
   const [notice, setNotice] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
   const patch = (section, key, next) => setDraft(prev => ({ ...prev, [section]: { ...prev[section], [key]: next } }));
   const reset = () => {
     setDraft(mergePreferences(DEFAULT_PREFERENCES));
@@ -39,6 +41,52 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
     try { await onSave(draft, deviceDraft); setNotice("Settings saved."); }
     catch (error) { setNotice(error?.message || "Could not save settings."); }
   };
+  function exportSettings() {
+    const data = { version: 1, accountPreferences: draft, devicePreferences: deviceDraft };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url; anchor.download = "pocketchat-settings.json"; anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("Settings exported.");
+  }
+
+  function importSettings(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { setNotice("Settings file must be under 2 MB."); event.target.value = ""; return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result || ""));
+        if (data.version !== 1 || !data.accountPreferences || !data.devicePreferences) throw new Error("Unsupported settings file.");
+        setDraft(mergePreferences(data.accountPreferences));
+        setDeviceDraft({ ...DEFAULT_DEVICE_PREFERENCES, ...data.devicePreferences, pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(data.devicePreferences.pet || {}) } });
+        setNotice("Settings imported. Press Save settings to apply them.");
+      } catch (error) { setNotice(error.message || "Invalid settings file."); }
+    };
+    reader.onerror = () => setNotice("Could not read that settings file.");
+    reader.readAsText(file);
+    event.target.value = "";
+  }
+
+  async function revokeAllSessions() {
+    if (!window.confirm("Log out PocketChat on every device, including this one?")) return;
+    setAccountBusy(true);
+    try { await onRevokeAll?.(); }
+    catch (error) { setNotice(error?.message || "Could not revoke sessions."); }
+    finally { setAccountBusy(false); }
+  }
+
+  async function deleteAccount() {
+    if (!deletePassword) { setNotice("Enter your account password first."); return; }
+    if (!window.confirm("Permanently delete your PocketChat account, messages and conversations? This cannot be undone.")) return;
+    setAccountBusy(true);
+    try { await onDeleteAccount?.(deletePassword); }
+    catch (error) { setNotice(error?.message || "Could not delete account."); }
+    finally { setAccountBusy(false); }
+  }
+
   function handlePetAvatar(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -55,7 +103,8 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "chat", label: "Chat & Media", icon: ImageIcon },
     { id: "privacy", label: "Privacy", icon: ShieldCheck },
-    { id: "pet", label: "Pet & Desktop", icon: Bell }
+    { id: "pet", label: "Pet & Desktop", icon: Bell },
+    { id: "account", label: "Account & Devices", icon: UserRound }
   ];
   const appearance = draft.appearance;
   const notifications = draft.notifications;
@@ -74,6 +123,7 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
             <Field label="Text size"><select className="setting-select" value={appearance.fontScale} onChange={e=>patch("appearance","fontScale",Number(e.target.value))}><option value={0.9}>Small</option><option value={1}>Default</option><option value={1.1}>Large</option><option value={1.2}>Extra large</option></select></Field>
             <Field label="Chat density"><select className="setting-select" value={appearance.density} onChange={e=>patch("appearance","density",e.target.value)}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></Field>
             <Field label="Message bubbles"><select className="setting-select" value={appearance.bubbleStyle} onChange={e=>patch("appearance","bubbleStyle",e.target.value)}><option value="rounded">Rounded</option><option value="soft">Soft corners</option><option value="square">Square</option></select></Field>
+            <div className="settings-io-row"><button type="button" className="text-btn" onClick={exportSettings}><Download size={13}/> Export settings</button><label className="text-btn settings-import-label"><Upload size={13}/> Import settings<input type="file" accept="application/json,.json" onChange={importSettings}/></label></div>
           </div>}
           {tab === "notifications" && <div className="settings-section"><h3>Notifications</h3><p className="muted">Choose which events can interrupt you.</p>
             <label className="settings-toggle"><span><strong>Desktop notifications</strong><small>Show alerts for incoming messages.</small></span><input type="checkbox" checked={notifications.enabled} onChange={e=>patch("notifications","enabled",e.target.checked)}/></label>
@@ -83,6 +133,12 @@ export default function SettingsCenter({ value, devicePreferences, onSave, onClo
             <label className="settings-toggle"><span><strong>Message reactions</strong><small>Notify me when someone reacts.</small></span><input type="checkbox" checked={notifications.reactions} onChange={e=>patch("notifications","reactions",e.target.checked)}/></label>
             <label className="settings-toggle"><span><strong>Quiet hours</strong><small>Mute notifications during a daily time window.</small></span><input type="checkbox" checked={notifications.quietHoursEnabled} onChange={e=>patch("notifications","quietHoursEnabled",e.target.checked)}/></label>
             {notifications.quietHoursEnabled && <div className="settings-time-row"><Field label="From"><input className="setting-input" type="time" value={notifications.quietStart} onChange={e=>patch("notifications","quietStart",e.target.value)}/></Field><Field label="Until"><input className="setting-input" type="time" value={notifications.quietEnd} onChange={e=>patch("notifications","quietEnd",e.target.value)}/></Field></div>}
+          </div>}
+          {tab === "account" && <div className="settings-section"><h3>Account & Devices</h3><p className="muted">Signed in as @{user?.username || "user"}.</p>
+            <div className="settings-note">Logging out all sessions revokes existing tokens. Account deletion removes your profile, friend requests, conversations and associated messages from the active database.</div>
+            <button type="button" className="secondary-btn settings-action" disabled={accountBusy} onClick={revokeAllSessions}><LogOut size={14}/> Log out all devices</button>
+            <Field label="Confirm account deletion" description="Enter your account password. This action cannot be undone."><input className="setting-input" type="password" autoComplete="current-password" value={deletePassword} onChange={e=>setDeletePassword(e.target.value)} placeholder="Account password"/></Field>
+            <button type="button" className="danger-btn settings-action" disabled={accountBusy || !deletePassword} onClick={deleteAccount}><Trash2 size={14}/> Permanently delete account</button>
           </div>}
           {tab === "pet" && <div className="settings-section"><h3>Pet & Desktop</h3><p className="muted">These settings stay on this PC and are not synced to your account.</p>
             <Field label="Pet mascot"><select className="setting-select" value={deviceDraft.pet.avatar} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,avatar:e.target.value}}))}><option value="cat">🐱 Orange cat</option>{deviceDraft.pet.customAvatarData && <option value="custom">Custom image</option>}<option value="fox">🦊 Fox</option><option value="dog">🐶 Dog</option><option value="panda">🐼 Panda</option><option value="rabbit">🐰 Rabbit</option><option value="robot">🤖 Robot</option><option value="ghost">👻 Ghost</option><option value="frog">🐸 Frog</option></select></Field>
