@@ -131,7 +131,12 @@ ipcMain.on("pet:settings", (_event, settings = {}) => {
     animate: settings.animate !== false
   };
   if (petWindow && !petWindow.isDestroyed()) {
-    petWindow.setSize(petSettings.size + 16, petSettings.size + 32);
+    const width = petSettings.size + 16, height = petSettings.size + 32;
+    const area = screen.getDisplayMatching(petWindow.getBounds()).workArea;
+    const bounds = petWindow.getBounds();
+    const x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - width));
+    const y = Math.max(area.y, Math.min(bounds.y, area.y + area.height - height));
+    petWindow.setBounds({ x, y, width, height });
     petWindow.setOpacity(petSettings.opacity / 100);
     petWindow.setAlwaysOnTop(petSettings.alwaysOnTop);
     petWindow.webContents.send("pet:settings", petSettings);
