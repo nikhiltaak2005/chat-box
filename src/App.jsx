@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 import EmojiPicker from "emoji-picker-react";
 import MediaPicker from "./MediaPicker.jsx";
 import SettingsCenter, { DEFAULT_DEVICE_PREFERENCES, DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon, LockKeyhole } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -58,6 +58,11 @@ export default function App() {
     try { const saved = JSON.parse(localStorage.getItem("pm_device_preferences") || "null"); return { ...DEFAULT_DEVICE_PREFERENCES, ...(saved || {}), pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(saved?.pet || {}) } }; }
     catch { return DEFAULT_DEVICE_PREFERENCES; }
   });
+  const [appLocked, setAppLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlockError, setUnlockError] = useState("");
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const lockInitializedRef = useRef(false);
   const preferencesRef = useRef(preferences);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState({ status: "idle", message: "Check for updates", version: "", percent: 0 });
@@ -98,7 +103,10 @@ export default function App() {
   async function savePreferences(next, nextDevicePreferences) {
     const data = await request("/api/preferences", token, { method: "PATCH", body: JSON.stringify(next) });
     setPreferences(data.preferences || next);
-    if (nextDevicePreferences) setDevicePreferences(nextDevicePreferences);
+    if (nextDevicePreferences) {
+      if (!devicePreferences.appLockEnabled && nextDevicePreferences.appLockEnabled) setAppLocked(true);
+      setDevicePreferences(nextDevicePreferences);
+    }
   }
 
   function isQuietNow(settings) {
@@ -108,6 +116,47 @@ export default function App() {
     const toMinutes = value => { const [h, m] = String(value || "00:00").split(":").map(Number); return h * 60 + m; };
     const start = toMinutes(settings.quietStart), end = toMinutes(settings.quietEnd);
     return start === end ? true : start < end ? current >= start && current < end : current >= start || current < end;
+  }
+
+  useEffect(() => {
+    if (!token || !me) { lockInitializedRef.current = false; setAppLocked(false); return; }
+    if (!lockInitializedRef.current) {
+      if (devicePreferences.appLockEnabled) setAppLocked(true);
+      lockInitializedRef.current = true;
+    }
+  }, [token, me, devicePreferences.appLockEnabled]);
+
+  useEffect(() => {
+    if (!token || !me || !devicePreferences.appLockEnabled || appLocked) return;
+    let timer;
+    const scheduleLock = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => setAppLocked(true), Number(devicePreferences.appLockTimeoutMinutes || 5) * 60 * 1000);
+    };
+    const events = ["pointerdown", "keydown", "mousemove", "touchstart"];
+    events.forEach(event => window.addEventListener(event, scheduleLock, { passive: true }));
+    scheduleLock();
+    return () => {
+      clearTimeout(timer);
+      events.forEach(event => window.removeEventListener(event, scheduleLock));
+    };
+  }, [token, me, devicePreferences.appLockEnabled, devicePreferences.appLockTimeoutMinutes, appLocked]);
+
+  async function unlockApp(event) {
+    event.preventDefault();
+    setUnlockError("");
+    setUnlockBusy(true);
+    try {
+      const data = await request("/api/auth/login", "", { method: "POST", body: JSON.stringify({ username: me.username, password: unlockPassword }) });
+      localStorage.setItem(tokenKey, data.token);
+      setToken(data.token);
+      setUnlockPassword("");
+      setAppLocked(false);
+    } catch (err) {
+      setUnlockError("Password didn't match. Try again.");
+    } finally {
+      setUnlockBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -428,6 +477,7 @@ export default function App() {
     </>}
     {adminOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAdminOpen(false);}}><section className="profile-dialog admin-dialog"><div className="profile-heading"><div><p className="eyebrow">OWNER CONTROLS</p><h2>User management</h2></div><button type="button" className="icon-btn" onClick={()=>setAdminOpen(false)}><X size={17}/></button></div><p className="muted">Disable an account to block access, or permanently delete its account, messages, conversations and friend requests.</p><div className="admin-user-list">{adminUsers.map(u=><div className="admin-user" key={u.id}><div className="contact-meta"><strong>{u.displayName||u.username} {u.role==="admin"?"· ADMIN":""}</strong><small>@{u.username} · {u.isDisabled?"Disabled":"Active"}</small></div>{u.role!=="admin" && <><button className="icon-btn" title={u.isDisabled?"Enable":"Disable"} onClick={()=>adminDisableUser(u.id,u.isDisabled)}>{u.isDisabled?"✓":"⏸"}</button><button className="icon-btn" title="Delete user and chats" onClick={()=>adminDeleteUser(u.id,u.username)}>🗑</button></>}</div>)}</div><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>request("/api/admin/storage/expired",token,{method:"DELETE"}).then(d=>setError("Expired messages cleaned: "+d.deletedMessages)).catch(e=>setError(e.message))}>Clean expired messages</button><button type="button" className="primary-btn" onClick={()=>setAdminOpen(false)}>Done</button></div></section></div>}
     {updateOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setUpdateOpen(false);}}><section className="profile-dialog"><div className="profile-heading"><div><p className="eyebrow">POCKETCHAT</p><h2>Software updates</h2></div><button type="button" className="icon-btn" onClick={()=>setUpdateOpen(false)}><X size={17}/></button></div><div className="update-status-icon">{updateInfo.status==="current" ? <CheckCircle2 size={28}/> : updateInfo.status==="downloaded" ? <CheckCircle2 size={28}/> : <Download size={28}/>}</div><strong className="update-status-title">{updateInfo.message || "Check for updates"}</strong>{updateInfo.version && <p className="muted">Version {updateInfo.version}</p>}{updateInfo.status==="downloading" && <div className="update-progress"><span style={{width:`${updateInfo.percent || 0}%`}}/></div>}{updateInfo.status==="error" && <p className="error-text">Please check your internet connection and try again.</p>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setUpdateOpen(false)}>Close</button><button type="button" className="primary-btn" disabled={updateBusy || ["checking","downloading","current","dev"].includes(updateInfo.status)} onClick={runUpdateAction}>{updateBusy ? "Please wait…" : updateInfo.status==="downloaded" ? "Install and restart" : updateInfo.status==="available" ? "Download update" : updateInfo.status==="downloading" ? "Downloading…" : updateInfo.status==="current" ? "Up to date" : updateInfo.status==="dev" ? "Installed app only" : "Check for updates"}</button></div>{updateInfo.status==="current" && <button type="button" className="text-btn" onClick={runUpdateAction}>Check again</button>}{updateInfo.status==="dev" && <p className="muted">The update service works in the installed app, not in the development window.</p>}</section></div>}
+    {appLocked && <div className="app-lock-overlay"><form className="app-lock-card" onSubmit={unlockApp}><div className="lock-icon"><LockKeyhole size={25}/></div><p className="eyebrow">POCKETCHAT LOCKED</p><h2>Welcome back.</h2><p className="muted">Enter your account password to unlock this device.</p><label>Password<input type="password" autoFocus autoComplete="current-password" value={unlockPassword} onChange={e=>setUnlockPassword(e.target.value)} required/></label>{unlockError && <div className="error-text">{unlockError}</div>}<button className="primary-btn" type="submit" disabled={unlockBusy}>{unlockBusy ? "Unlocking…" : "Unlock PocketChat"}</button></form></div>}
     {settingsCenterOpen && <SettingsCenter value={preferences} devicePreferences={devicePreferences} onSave={savePreferences} onClose={()=>setSettingsCenterOpen(false)} />}
     {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;
