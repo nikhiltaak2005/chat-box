@@ -5,7 +5,8 @@
 .wrap{width:calc(var(--pet-size,88px) + 16px);height:calc(var(--pet-size,88px) + 32px);display:flex;align-items:center;justify-content:center;flex-direction:column;cursor:grab}.wrap:active{cursor:grabbing}
 .pet-button{position:relative;width:var(--pet-size,88px);height:var(--pet-size,88px);border:0;background:transparent;padding:0;cursor:pointer;filter:drop-shadow(0 5px 6px #0006);transition:transform .15s}
 .pet-button svg{width:var(--pet-size,88px);height:var(--pet-size,88px)}
-.pet-emoji{display:none;font-size:calc(var(--pet-size,88px) * .82);line-height:1}
+.pet-emoji{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:calc(var(--pet-size,88px) * .82);line-height:1}
+.pet-custom-image{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--pet-size,88px);height:var(--pet-size,88px);object-fit:contain;border-radius:12px}
 .pet-button:hover{transform:translateY(-2px) scale(1.03)}.pet-button:active{transform:scale(.97)}
 .pet-button.no-animation,.pet-button.no-animation:hover,.pet-button.no-animation:active{transition:none;transform:none}
 .badge{display:none;position:absolute;top:0;right:-1px;min-width:23px;height:23px;border:2px solid #fff;border-radius:99px;background:#e84747;color:white;font-size:11px;font-weight:800;align-items:center;justify-content:center;padding:0 5px;box-shadow:0 2px 7px #0005}
@@ -19,7 +20,7 @@
 </svg><span class="pet-emoji" id="petEmoji" aria-hidden="true">🦊</span><img class="pet-custom-image" id="petCustomImage" alt="Custom PocketChat pet"><span class="badge" id="badge">1</span></button><div class="caption">PocketChat</div></div>
 <script>
 const badge=document.getElementById("badge"), pet=document.getElementById("pet"), svg=pet.querySelector("svg"), petEmoji=document.getElementById("petEmoji"), petCustomImage=document.getElementById("petCustomImage"), wrap=document.getElementById("wrap");
-const avatars={cat:"",fox:"🦊",dog:"🐶",panda:"🐼",rabbit:"🐰",robot:"🤖",ghost:"👻",frog:"🐸"};
+const avatars={cat:"",fox:"🦊",dog:"🐶",panda:"🐼",rabbit:"🐰",robot:"🤖",ghost:"👻",frog:"🐸",custom:""};
 let down=null, dragged=false;
 pet.addEventListener("pointerdown",e=>{down={x:e.screenX,y:e.screenY,wx:window.screenX,wy:window.screenY};dragged=false;pet.setPointerCapture(e.pointerId);});
 pet.addEventListener("pointermove",e=>{if(!down||!(e.buttons&1))return;const dx=e.screenX-down.x,dy=e.screenY-down.y;if(Math.abs(dx)+Math.abs(dy)>4)dragged=true;if(dragged)window.desktop?.movePet(down.wx+dx,down.wy+dy);});
