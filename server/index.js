@@ -111,6 +111,7 @@ function verifyToken(token) {
 const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
+  chat: { enterToSend: true, reactions: true, mediaEnabled: true },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
 };
 
@@ -119,6 +120,7 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
   const result = {
     appearance: { ...DEFAULT_PREFERENCES.appearance, ...(base.appearance || {}) },
     notifications: { ...DEFAULT_PREFERENCES.notifications, ...(base.notifications || {}) },
+    chat: { ...DEFAULT_PREFERENCES.chat, ...(base.chat || {}) },
     privacy: { ...DEFAULT_PREFERENCES.privacy, ...(base.privacy || {}) }
   };
   const appearance = source.appearance || {};
@@ -134,6 +136,10 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
   if (["full", "sender", "hidden"].includes(notifications.preview)) result.notifications.preview = notifications.preview;
   for (const key of ["quietStart", "quietEnd"]) {
     if (typeof notifications[key] === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(notifications[key])) result.notifications[key] = notifications[key];
+  }
+  const chat = source.chat || {};
+  for (const key of ["enterToSend", "reactions", "mediaEnabled"]) {
+    if (typeof chat[key] === "boolean") result.chat[key] = chat[key];
   }
   const privacy = source.privacy || {};
   for (const key of ["readReceipts", "showOnline"]) {
