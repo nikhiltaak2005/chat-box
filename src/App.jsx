@@ -29,6 +29,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [query, setQuery] = useState("");
   const [contacts, setContacts] = useState([]);
+  const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
   const [friendUsername, setFriendUsername] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -125,6 +126,7 @@ export default function App() {
     socket.on("connect", () => {
       console.log("[Socket] Connected:", socket.id);
       setStatus("Online");
+      socket.emit("presence:sync");
     });
     socket.on("disconnect", reason => {
       console.log("[Socket] Disconnected:", reason);
@@ -133,6 +135,11 @@ export default function App() {
     socket.on("connect_error", err => {
       console.error("[Socket] Connection error:", err.message);
       setStatus("Offline");
+    });
+    socket.on("presence:initial", payload => setOnlineUserIds(payload?.onlineUserIds || []));
+    socket.on("presence:changed", payload => {
+      if (!payload?.userId) return;
+      setOnlineUserIds(prev => payload.online ? (prev.includes(payload.userId) ? prev : [...prev, payload.userId]) : prev.filter(id => id !== payload.userId));
     });
     socket.on("unread:count", count => {
       window.desktop?.setUnreadCount(count);
@@ -359,7 +366,7 @@ export default function App() {
         {friendRequests.some(r=>r.status==="pending" && r.senderId===me.id) && <><div className="section-label">SENT REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.senderId===me.id).length}</span></div><div className="contact-list request-list">{friendRequests.filter(r=>r.status==="pending" && r.senderId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username} · Waiting for acceptance</small></div><span className="request-pending">Pending</span></div>)}</div></>}
         <div className="section-label">PEOPLE <span>{filtered.length}</span></div>
         <div className="contact-list">
-          {filtered.map(c=>{const pending=friendRequests.find(r=>r.status==="pending" && ((r.senderId===me.id && r.person.username===c.username)||(r.recipientId===me.id && r.person.username===c.username)));return <button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : pending ? (pending.recipientId===me.id ? answerFriendRequest(pending.id,"accept") : setError("Friend request already sent. Waiting for @"+c.username+" to accept.")) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? "Friend — open chat" : pending ? (pending.recipientId===me.id ? "Accept incoming request" : "Request sent · waiting") : "Add friend"}</small></div>{c.isFriend ? <MessageCircle size={15} className="open-arrow"/> : pending ? <span className="request-pending">{pending.recipientId===me.id ? "Accept" : "Sent"}</span> : <Plus size={15} className="open-arrow"/>}</button>})}
+          {filtered.map(c=>{const pending=friendRequests.find(r=>r.status==="pending" && ((r.senderId===me.id && r.person.username===c.username)||(r.recipientId===me.id && r.person.username===c.username)));return <button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : pending ? (pending.recipientId===me.id ? answerFriendRequest(pending.id,"accept") : setError("Friend request already sent. Waiting for @"+c.username+" to accept.")) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? (onlineUserIds.includes(c._id) ? "Online" : c.lastSeenAt ? ("Last seen " + new Date(c.lastSeenAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })) : "Offline") : pending ? (pending.recipientId===me.id ? "Accept incoming request" : "Request sent · waiting") : "Add friend"}</small></div>{c.isFriend ? <MessageCircle size={15} className="open-arrow"/> : pending ? <span className="request-pending">{pending.recipientId===me.id ? "Accept" : "Sent"}</span> : <Plus size={15} className="open-arrow"/>}</button>})}
           {filtered.length===0 && <div className="empty-people"><UserRound size={22}/><strong>No people yet</strong><span>Create another account on a second device/server to start a conversation.</span></div>}
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
