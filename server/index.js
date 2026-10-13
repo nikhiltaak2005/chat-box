@@ -48,6 +48,7 @@ const userSchema = new Schema(
   {
     role: { type: String, enum: ["user", "admin"], default: "user" },
     isDisabled: { type: Boolean, default: false },
+    tokenVersion: { type: Number, default: 0 },
     username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24 },
     displayName: { type: String, trim: true, maxlength: 40, default: "" },
     avatarData: { type: String, default: "", maxlength: 1500000 },
@@ -95,8 +96,10 @@ const Message = mongoose.model("Message", messageSchema);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function signToken(userId) {
-  return jwt.sign({ id: userId.toString() }, JWT_SECRET, { expiresIn: "30d" });
+function signToken(user) {
+  const userId = user?._id || user;
+  const tokenVersion = Number(user?.tokenVersion || 0);
+  return jwt.sign({ id: userId.toString(), tokenVersion }, JWT_SECRET, { expiresIn: "30d" });
 }
 
 function verifyToken(token) {
@@ -110,7 +113,7 @@ function verifyToken(token) {
 
 const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
-  notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
+  notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00", mutedContacts: [] },
   chat: { enterToSend: true, reactions: true, mediaEnabled: true },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
 };
@@ -135,6 +138,7 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
     if (typeof notifications[key] === "boolean") result.notifications[key] = notifications[key];
   }
   if (["full", "sender", "hidden"].includes(notifications.preview)) result.notifications.preview = notifications.preview;
+  if (Array.isArray(notifications.mutedContacts)) result.notifications.mutedContacts = [...new Set(notifications.mutedContacts.filter(id => typeof id === "string" && /^[a-f0-9]{24}$/i.test(id)))].slice(0, 500);
   for (const key of ["quietStart", "quietEnd"]) {
     if (typeof notifications[key] === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(notifications[key])) result.notifications[key] = notifications[key];
   }
@@ -228,13 +232,19 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, db: mongoose.connection.readyState === 1 ? "connected" : "disconnected" });
 });
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   const payload = verifyToken(token);
   if (!payload) return res.status(401).json({ error: "Not authorized" });
-  req.userId = payload.id;
-  return next();
+  try {
+    const user = await User.findById(payload.id).select("isDisabled tokenVersion");
+    if (!user || user.isDisabled || Number(user.tokenVersion || 0) !== Number(payload.tokenVersion || 0)) {
+      return res.status(401).json({ error: "Session expired. Please sign in again." });
+    }
+    req.userId = payload.id;
+    return next();
+  } catch (err) { return next(err); }
 }
 
 app.post("/api/auth/register", async (req, res, next) => {
@@ -256,7 +266,7 @@ app.post("/api/auth/register", async (req, res, next) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await User.create({ username, displayName, passwordHash });
 
-    return res.status(201).json({ token: signToken(user._id), user: publicSelf(user) });
+    return res.status(201).json({ token: signToken(user), user: publicSelf(user) });
   } catch (err) {
     if (err?.code === 11000) return res.status(409).json({ error: "That username is already taken." });
     return next(err);
@@ -285,7 +295,7 @@ app.post("/api/auth/login", async (req, res, next) => {
       await user.save();
     }
 
-    return res.json({ token: signToken(user._id), user: { ...publicSelf(user), role: user.role } });
+    return res.json({ token: signToken(user), user: { ...publicSelf(user), role: user.role } });
   } catch (err) {
     return next(err);
   }
@@ -344,6 +354,38 @@ app.patch("/api/preferences", requireAuth, async (req, res, next) => {
       }
     }
     return res.json({ preferences });
+  } catch (err) { return next(err); }
+});
+
+app.post("/api/sessions/revoke-all", requireAuth, async (req, res, next) => {
+  try {
+    const user = await User.findByIdAndUpdate(req.userId, { $inc: { tokenVersion: 1 } }, { new: true }).select("_id");
+    if (!user) return res.status(404).json({ error: "User not found." });
+    io.in(req.userId).disconnectSockets(true);
+    return res.json({ ok: true, message: "All sessions were revoked. Sign in again on this device." });
+  } catch (err) { return next(err); }
+});
+
+app.delete("/api/account", requireAuth, async (req, res, next) => {
+  try {
+    const password = String(req.body?.password || "");
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ error: "User not found." });
+    if (!password || !(await bcrypt.compare(password, user.passwordHash))) {
+      return res.status(401).json({ error: "Enter your account password to confirm deletion." });
+    }
+    const conversations = await Conversation.find({ participants: user._id }).select("_id");
+    const conversationIds = conversations.map(conversation => conversation._id);
+    io.in(user._id.toString()).disconnectSockets(true);
+    onlineUsers.delete(user._id.toString());
+    await notifyFriendsPresence(user._id.toString(), false);
+    await Promise.all([
+      Message.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }, { conversationId: { $in: conversationIds } }] }),
+      Conversation.deleteMany({ participants: user._id }),
+      FriendRequest.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }] })
+    ]);
+    await User.deleteOne({ _id: user._id });
+    return res.json({ ok: true, message: "Account and associated conversations were deleted." });
   } catch (err) { return next(err); }
 });
 
@@ -552,8 +594,8 @@ io.use(async (socket, next) => {
   const payload = verifyToken(socket.handshake.auth?.token);
   if (!payload) return next(new Error("Not authorized"));
   try {
-    const user = await User.findById(payload.id).select("isDisabled");
-    if (!user || user.isDisabled) return next(new Error("Account unavailable"));
+    const user = await User.findById(payload.id).select("isDisabled tokenVersion");
+    if (!user || user.isDisabled || Number(user.tokenVersion || 0) !== Number(payload.tokenVersion || 0)) return next(new Error("Account unavailable"));
     socket.userId = payload.id;
     return next();
   } catch (err) {

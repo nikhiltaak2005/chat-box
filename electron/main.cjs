@@ -146,7 +146,7 @@ ipcMain.on("pet:settings", (_event, settings = {}) => {
 });
 ipcMain.on("app:set-launch-at-startup", (_event, enabled) => {
   if (!app.isPackaged) return;
-  app.setLoginItemSettings({ openAtLogin: Boolean(enabled) });
+  app.setLoginItemSettings({ openAtLogin: enabled === true });
 });
 ipcMain.on("pet:open-chat", showChat);
 ipcMain.on("notification:incoming", (_event, body, options = {}) => {
