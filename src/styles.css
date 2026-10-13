@@ -182,3 +182,17 @@
   .app-shell.theme-system .settings-section h3,.app-shell.theme-system .settings-toggle,.app-shell.theme-system .settings-field{color:#20212a}
   .app-shell.theme-system .settings-field>small,.app-shell.theme-system .settings-toggle small{color:#656672}
 }
+
+
+/* Account controls and portable settings */
+.settings-io-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px}
+.settings-io-row .text-btn{display:inline-flex;align-items:center;gap:6px;width:auto;margin:0;padding:8px 10px;border:1px solid #393a44;border-radius:8px;background:#202128}
+.settings-import-label{cursor:pointer}
+.settings-import-label input{display:none}
+.settings-action{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin:0;padding:10px;border-radius:9px;font-size:11px;cursor:pointer}
+.secondary-btn.settings-action{border:1px solid #393a44;background:#22232a;color:#f1f1f5}
+.danger-btn.settings-action{border:1px solid #67343a;background:#351e22;color:#ffb3b9}
+.settings-action:disabled{opacity:.5;cursor:not-allowed}
+.app-shell.theme-light .settings-io-row .text-btn{background:#f5f5f8;border-color:#d7d8df;color:#20212a}
+.app-shell.theme-light .secondary-btn.settings-action{background:#f5f5f8;border-color:#d7d8df;color:#20212a}
+.app-shell.theme-light .danger-btn.settings-action{background:#fff0f1;border-color:#e7c5c8;color:#8a2933}
