@@ -109,7 +109,7 @@ function verifyToken(token) {
 }
 
 const DEFAULT_PREFERENCES = {
-  appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
+  appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
   chat: { enterToSend: true, reactions: true, mediaEnabled: true },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
@@ -126,6 +126,7 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
   const appearance = source.appearance || {};
   if (["dark", "light", "system"].includes(appearance.theme)) result.appearance.theme = appearance.theme;
   if (typeof appearance.accentColor === "string" && /^#[0-9a-f]{6}$/i.test(appearance.accentColor)) result.appearance.accentColor = appearance.accentColor;
+  if (typeof appearance.wallpaperColor === "string" && /^#[0-9a-f]{6}$/i.test(appearance.wallpaperColor)) result.appearance.wallpaperColor = appearance.wallpaperColor;
   if ([0.9, 1, 1.1, 1.2].includes(Number(appearance.fontScale))) result.appearance.fontScale = Number(appearance.fontScale);
   if (["compact", "comfortable"].includes(appearance.density)) result.appearance.density = appearance.density;
   if (["rounded", "soft", "square"].includes(appearance.bubbleStyle)) result.appearance.bubbleStyle = appearance.bubbleStyle;
