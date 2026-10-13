@@ -71,7 +71,11 @@ const messageSchema = new Schema(
     conversationId: { type: Schema.Types.ObjectId, ref: "Conversation", required: true, index: true },
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     recipientId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    body: { type: String, required: true, trim: true, maxlength: 4000 },
+    body: { type: String, trim: true, maxlength: 4000, default: "" },
+    contentType: { type: String, enum: ["text", "gif", "sticker"], default: "text" },
+    mediaUrl: { type: String, default: "", maxlength: 2000 },
+    mediaPreviewUrl: { type: String, default: "", maxlength: 2000 },
+    reactions: [{ userId: { type: Schema.Types.ObjectId, ref: "User", required: true }, emoji: { type: String, required: true, maxlength: 16 } }],
     replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
     readAt: { type: Date, default: null, index: true },
     deleteAt: { type: Date, default: null, index: true },
@@ -105,8 +109,9 @@ function verifyToken(token) {
 }
 
 const DEFAULT_PREFERENCES = {
-  appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
+  appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
+  chat: { enterToSend: true, reactions: true, mediaEnabled: true },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
 };
 
@@ -115,11 +120,13 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
   const result = {
     appearance: { ...DEFAULT_PREFERENCES.appearance, ...(base.appearance || {}) },
     notifications: { ...DEFAULT_PREFERENCES.notifications, ...(base.notifications || {}) },
+    chat: { ...DEFAULT_PREFERENCES.chat, ...(base.chat || {}) },
     privacy: { ...DEFAULT_PREFERENCES.privacy, ...(base.privacy || {}) }
   };
   const appearance = source.appearance || {};
   if (["dark", "light", "system"].includes(appearance.theme)) result.appearance.theme = appearance.theme;
   if (typeof appearance.accentColor === "string" && /^#[0-9a-f]{6}$/i.test(appearance.accentColor)) result.appearance.accentColor = appearance.accentColor;
+  if (typeof appearance.wallpaperColor === "string" && /^#[0-9a-f]{6}$/i.test(appearance.wallpaperColor)) result.appearance.wallpaperColor = appearance.wallpaperColor;
   if ([0.9, 1, 1.1, 1.2].includes(Number(appearance.fontScale))) result.appearance.fontScale = Number(appearance.fontScale);
   if (["compact", "comfortable"].includes(appearance.density)) result.appearance.density = appearance.density;
   if (["rounded", "soft", "square"].includes(appearance.bubbleStyle)) result.appearance.bubbleStyle = appearance.bubbleStyle;
@@ -130,6 +137,10 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
   if (["full", "sender", "hidden"].includes(notifications.preview)) result.notifications.preview = notifications.preview;
   for (const key of ["quietStart", "quietEnd"]) {
     if (typeof notifications[key] === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(notifications[key])) result.notifications[key] = notifications[key];
+  }
+  const chat = source.chat || {};
+  for (const key of ["enterToSend", "reactions", "mediaEnabled"]) {
+    if (typeof chat[key] === "boolean") result.chat[key] = chat[key];
   }
   const privacy = source.privacy || {};
   for (const key of ["readReceipts", "showOnline"]) {
@@ -174,6 +185,10 @@ function serializeMessage(m, hideReadAt = false) {
     senderId: m.senderId.toString(),
     recipientId: m.recipientId.toString(),
     body: m.body,
+    contentType: m.contentType || "text",
+    mediaUrl: m.mediaUrl || "",
+    mediaPreviewUrl: m.mediaPreviewUrl || "",
+    reactions: (m.reactions || []).map(reaction => ({ userId: reaction.userId.toString(), emoji: reaction.emoji })),
     replyTo: m.replyTo ? m.replyTo.toString() : null,
     createdAt: m.createdAt,
     readAt: hideReadAt ? null : (m.readAt || null),
@@ -435,6 +450,45 @@ app.get("/api/users", requireAuth, async (req, res, next) => {
   }
 });
 
+const giphyCache = new Map();
+let giphyWindowStart = Date.now();
+let giphyRequestCount = 0;
+app.get("/api/media/giphy", requireAuth, async (req, res) => {
+  const apiKey = String(process.env.GIPHY_API_KEY || "").trim();
+  if (!apiKey) return res.status(503).json({ error: "GIF and sticker search is not configured yet. Add GIPHY_API_KEY to the backend environment." });
+  const type = req.query.type === "sticker" ? "sticker" : "gif";
+  const query = String(req.query.q || "").trim().slice(0, 50);
+  const cacheKey = type + ":" + query.toLowerCase();
+  const cached = giphyCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 60_000) return res.json(cached.data);
+  if (Date.now() - giphyWindowStart >= 60 * 60 * 1000) { giphyWindowStart = Date.now(); giphyRequestCount = 0; }
+  const maxCalls = Math.max(10, Number(process.env.GIPHY_MAX_REQUESTS_PER_HOUR) || 90);
+  if (giphyRequestCount >= maxCalls) return res.status(429).json({ error: "GIF search limit reached for this hour. Try again later." });
+  const endpoint = type === "sticker" ? "stickers" : "gifs";
+  const params = new URLSearchParams({ api_key: apiKey, limit: "24", rating: "g" });
+  if (query) params.set("q", query);
+  try {
+    giphyRequestCount += 1;
+    const response = await fetch("https://api.giphy.com/v1/" + endpoint + (query ? "/search" : "/trending") + "?" + params.toString());
+    if (!response.ok) return res.status(response.status === 429 ? 429 : 502).json({ error: response.status === 429 ? "GIF provider rate limit reached. Try again shortly." : "GIF provider is temporarily unavailable." });
+    const payload = await response.json();
+    const results = (payload.data || []).map(item => {
+      const images = item.images || {};
+      const full = images.fixed_width?.url || images.original?.url || "";
+      const preview = images.fixed_width_small?.url || images.preview_gif?.url || full;
+      if (!full.startsWith("https://") || !preview.startsWith("https://")) return null;
+      return { id: String(item.id), title: String(item.title || ""), mediaUrl: full, previewUrl: preview, width: Number(images.fixed_width?.width || images.original?.width || 0), height: Number(images.fixed_width?.height || images.original?.height || 0) };
+    }).filter(Boolean);
+    const data = { provider: "GIPHY", results };
+    giphyCache.set(cacheKey, { createdAt: Date.now(), data });
+    if (giphyCache.size > 100) giphyCache.delete(giphyCache.keys().next().value);
+    return res.json(data);
+  } catch (err) {
+    console.error("[media] GIPHY request failed", err.message);
+    return res.status(502).json({ error: "Could not reach the GIF provider. Try again later." });
+  }
+});
+
 app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
   try {
     const { personId } = req.params;
@@ -541,10 +595,20 @@ io.on("connection", (socket) => {
     const respond = typeof ack === "function" ? ack : () => {};
     try {
       const conversationId = payload?.conversationId;
+      const contentType = ["text", "gif", "sticker"].includes(payload?.contentType) ? payload.contentType : "text";
       const body = String(payload?.body || "").trim();
-
-      if (!body) return respond({ error: "Message cannot be empty." });
-      if (body.length > 4000) return respond({ error: "Message is too long." });
+      const mediaUrl = String(payload?.mediaUrl || "");
+      const mediaPreviewUrl = String(payload?.mediaPreviewUrl || "");
+      if (contentType === "text" && !body) return respond({ error: "Message cannot be empty." });
+      if (body.length > (contentType === "text" ? 4000 : 500)) return respond({ error: "Message is too long." });
+      if (contentType !== "text") {
+        try {
+          const media = new URL(mediaUrl);
+          const preview = new URL(mediaPreviewUrl || mediaUrl);
+          const isGiphy = url => url.protocol === "https:" && (url.hostname === "giphy.com" || url.hostname.endsWith(".giphy.com"));
+          if (!isGiphy(media) || !isGiphy(preview)) return respond({ error: "Only verified HTTPS GIPHY media can be sent." });
+        } catch { return respond({ error: "Invalid media URL." }); }
+      }
       if (!isValidId(conversationId)) return respond({ error: "Invalid conversation." });
 
       const conversation = await Conversation.findById(conversationId);
@@ -570,6 +634,9 @@ io.on("connection", (socket) => {
         senderId: socket.userId,
         recipientId,
         body,
+        contentType,
+        mediaUrl: contentType === "text" ? "" : mediaUrl,
+        mediaPreviewUrl: contentType === "text" ? "" : (mediaPreviewUrl || mediaUrl),
         replyTo
       });
       const serialized = serializeMessage(message);
@@ -580,6 +647,36 @@ io.on("connection", (socket) => {
     } catch (err) {
       console.error("[socket] message:send failed", err);
       return respond({ error: "Could not send message." });
+    }
+  });
+
+  socket.on("message:reaction", async (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    const allowedEmojis = ["👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "🙏", "👎", "🥹"];
+    try {
+      const messageId = payload?.messageId;
+      const emoji = String(payload?.emoji || "");
+      if (!isValidId(messageId) || !allowedEmojis.includes(emoji)) return respond({ error: "Invalid reaction." });
+      const message = await Message.findById(messageId);
+      if (!message) return respond({ error: "Message no longer exists." });
+      const conversation = await Conversation.findById(message.conversationId);
+      if (!conversation || !conversation.participants.some(id => id.toString() === socket.userId)) return respond({ error: "Not a participant in this conversation." });
+      const existing = (message.reactions || []).find(item => item.userId.toString() === socket.userId);
+      if (existing?.emoji === emoji) {
+        message.reactions = message.reactions.filter(item => item.userId.toString() !== socket.userId);
+      } else {
+        message.reactions = message.reactions.filter(item => item.userId.toString() !== socket.userId);
+        message.reactions.push({ userId: socket.userId, emoji });
+      }
+      await message.save();
+      const participants = conversation.participants.map(id => id.toString());
+      const reactions = (message.reactions || []).map(item => ({ userId: item.userId.toString(), emoji: item.emoji }));
+      const event = { conversationId: message.conversationId.toString(), messageId: message._id.toString(), messageSenderId: message.senderId.toString(), actorId: socket.userId, reactions };
+      io.to(participants[0]).to(participants[1]).emit("message:reaction", event);
+      return respond({ ok: true, reactions });
+    } catch (err) {
+      console.error("[socket] message:reaction failed", err);
+      return respond({ error: "Could not save reaction." });
     }
   });
 

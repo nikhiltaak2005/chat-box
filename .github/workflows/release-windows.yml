@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (for example 0.2.1)"
+        description: "Release version (for example 0.2.3)"
         required: true
-        default: "0.2.1"
+        default: "0.2.3"
         type: string
 
 permissions:
@@ -33,6 +33,14 @@ jobs:
         env:
           VITE_API_URL: https://personal-messenger-api.onrender.com
         run: npm run package:win -- --config.win.signAndEditExecutable=false --publish never
+      - name: Verify updater metadata matches installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem release -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "Windows installer was not produced." }
+          $metadata = Get-Content release/latest.yml -Raw
+          if (-not $metadata.Contains($exe.Name)) { throw "latest.yml does not reference installer $($exe.Name)." }
+          Write-Host "Verified updater metadata references $($exe.Name)"
       - name: Publish GitHub Release for in-app updater
         uses: softprops/action-gh-release@v2
         with:

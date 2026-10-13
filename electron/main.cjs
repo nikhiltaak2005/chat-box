@@ -5,7 +5,7 @@ const { autoUpdater } = require("electron-updater");
 let chatWindow;
 let petWindow;
 let unreadCount = 0;
-let petSettings = { avatar: "cat", size: 88, opacity: 100, alwaysOnTop: true, animate: true };
+let petSettings = { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true };
 let isQuitting = false;
 let updateState = { status: "idle", version: "", percent: 0, message: "Check for updates" };
 
@@ -120,11 +120,13 @@ ipcMain.on("pet:move", (_event, x, y) => {
   petWindow.setPosition(nx, ny);
 });
 ipcMain.on("pet:settings", (_event, settings = {}) => {
-  const avatars = ["cat", "fox", "dog", "panda", "rabbit", "robot", "ghost", "frog"];
+  const avatars = ["cat", "fox", "dog", "panda", "rabbit", "robot", "ghost", "frog", "custom"];
   const size = Number(settings.size);
   const opacity = Number(settings.opacity);
+  const customAvatarData = typeof settings.customAvatarData === "string" && settings.customAvatarData.length <= 1500000 && /^data:image\/(png|jpeg|webp);base64,/i.test(settings.customAvatarData) ? settings.customAvatarData : "";
   petSettings = {
-    avatar: avatars.includes(settings.avatar) ? settings.avatar : "cat",
+    avatar: avatars.includes(settings.avatar) && (settings.avatar !== "custom" || customAvatarData) ? settings.avatar : "cat",
+    customAvatarData,
     size: Number.isFinite(size) ? Math.max(64, Math.min(144, Math.round(size / 8) * 8)) : 88,
     opacity: Number.isFinite(opacity) ? Math.max(40, Math.min(100, opacity)) : 100,
     alwaysOnTop: settings.alwaysOnTop !== false,

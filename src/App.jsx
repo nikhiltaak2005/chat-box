@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import EmojiPicker from "emoji-picker-react";
+import MediaPicker from "./MediaPicker.jsx";
 import SettingsCenter, { DEFAULT_DEVICE_PREFERENCES, DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2 } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon, LockKeyhole } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -31,8 +32,11 @@ export default function App() {
   const [contacts, setContacts] = useState([]);
   const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
+  const friendRequestsRef = useRef(friendRequests);
+  const peopleLoadedRef = useRef(false);
   const [friendUsername, setFriendUsername] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminUsers, setAdminUsers] = useState([]);
   const [active, setActive] = useState(null);
@@ -54,6 +58,11 @@ export default function App() {
     try { const saved = JSON.parse(localStorage.getItem("pm_device_preferences") || "null"); return { ...DEFAULT_DEVICE_PREFERENCES, ...(saved || {}), pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(saved?.pet || {}) } }; }
     catch { return DEFAULT_DEVICE_PREFERENCES; }
   });
+  const [appLocked, setAppLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlockError, setUnlockError] = useState("");
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const lockInitializedRef = useRef(false);
   const preferencesRef = useRef(preferences);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState({ status: "idle", message: "Check for updates", version: "", percent: 0 });
@@ -67,6 +76,7 @@ export default function App() {
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { visibleRef.current = chatVisible; }, [chatVisible]);
   useEffect(() => { preferencesRef.current = preferences; }, [preferences]);
+  useEffect(() => { friendRequestsRef.current = friendRequests; }, [friendRequests]);
   useEffect(() => {
     localStorage.setItem("pm_device_preferences", JSON.stringify(devicePreferences));
     window.desktop?.setPetSettings?.(devicePreferences.pet);
@@ -93,7 +103,10 @@ export default function App() {
   async function savePreferences(next, nextDevicePreferences) {
     const data = await request("/api/preferences", token, { method: "PATCH", body: JSON.stringify(next) });
     setPreferences(data.preferences || next);
-    if (nextDevicePreferences) setDevicePreferences(nextDevicePreferences);
+    if (nextDevicePreferences) {
+      if (!devicePreferences.appLockEnabled && nextDevicePreferences.appLockEnabled) setAppLocked(true);
+      setDevicePreferences(nextDevicePreferences);
+    }
   }
 
   function isQuietNow(settings) {
@@ -106,7 +119,49 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!token || !me) { lockInitializedRef.current = false; setAppLocked(false); return; }
+    if (!lockInitializedRef.current) {
+      if (devicePreferences.appLockEnabled) setAppLocked(true);
+      lockInitializedRef.current = true;
+    }
+  }, [token, me, devicePreferences.appLockEnabled]);
+
+  useEffect(() => {
+    if (!token || !me || !devicePreferences.appLockEnabled || appLocked) return;
+    let timer;
+    const scheduleLock = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => setAppLocked(true), Number(devicePreferences.appLockTimeoutMinutes || 5) * 60 * 1000);
+    };
+    const events = ["pointerdown", "keydown", "mousemove", "touchstart"];
+    events.forEach(event => window.addEventListener(event, scheduleLock, { passive: true }));
+    scheduleLock();
+    return () => {
+      clearTimeout(timer);
+      events.forEach(event => window.removeEventListener(event, scheduleLock));
+    };
+  }, [token, me, devicePreferences.appLockEnabled, devicePreferences.appLockTimeoutMinutes, appLocked]);
+
+  async function unlockApp(event) {
+    event.preventDefault();
+    setUnlockError("");
+    setUnlockBusy(true);
+    try {
+      const data = await request("/api/auth/login", "", { method: "POST", body: JSON.stringify({ username: me.username, password: unlockPassword }) });
+      localStorage.setItem(tokenKey, data.token);
+      setToken(data.token);
+      setUnlockPassword("");
+      setAppLocked(false);
+    } catch (err) {
+      setUnlockError("Password didn't match. Try again.");
+    } finally {
+      setUnlockBusy(false);
+    }
+  }
+
+  useEffect(() => {
     if (!token || !me) return;
+    peopleLoadedRef.current = false;
     const refreshPeople = async () => {
       try {
         const [people, friends] = await Promise.all([
@@ -114,7 +169,15 @@ export default function App() {
           request("/api/friends", token)
         ]);
         setContacts(people.users || []);
-        setFriendRequests(friends.requests || []);
+        const nextRequests = friends.requests || [];
+        const existingIds = new Set(friendRequestsRef.current.map(request => request.id));
+        const newIncoming = nextRequests.filter(request => request.status === "pending" && request.recipientId === me.id && !existingIds.has(request.id));
+        if (peopleLoadedRef.current && newIncoming.length && !visibleRef.current && preferencesRef.current.notifications.enabled && preferencesRef.current.notifications.friendRequests && !isQuietNow(preferencesRef.current.notifications)) {
+          const personName = newIncoming[0].person?.username || "someone";
+          window.desktop?.notifyIncoming("New friend request from @" + personName, { sound: preferencesRef.current.notifications.sound });
+        }
+        setFriendRequests(nextRequests);
+        peopleLoadedRef.current = true;
       } catch (e) {
         setError(e.message);
       }
@@ -164,7 +227,7 @@ export default function App() {
       if (msg.senderId !== me.id) {
         // Notifications never mark a message as read. Preferences are account-synced.
         if ((!visibleRef.current || !isCurrentConversation) && preferencesRef.current.notifications.enabled && !isQuietNow(preferencesRef.current.notifications)) {
-          const preview = preferencesRef.current.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferencesRef.current.notifications.preview === "sender" ? ("New message from " + (activeRef.current?.username || "a contact")) : "You received a new message.";
+          const preview = preferencesRef.current.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferencesRef.current.notifications.preview === "sender" ? "New message from a contact" : "You received a new message.";
           window.desktop?.notifyIncoming(preview, { sound: preferencesRef.current.notifications.sound });
         }
       }
@@ -178,6 +241,15 @@ export default function App() {
       if (payload?.conversationId !== activeRef.current?.conversationId) return;
       const ids = new Set(payload.messageIds || []);
       setMessages(prev => prev.map(message => ids.has(message._id) ? { ...message, readAt: payload.readAt } : message));
+    });
+    socket.on("message:reaction", payload => {
+      if (payload?.conversationId === activeRef.current?.conversationId) {
+        setMessages(prev => prev.map(message => message._id === payload.messageId ? { ...message, reactions: payload.reactions || [] } : message));
+      }
+      const prefs = preferencesRef.current;
+      if (payload?.messageSenderId === me.id && payload.actorId !== me.id && prefs.notifications.enabled && prefs.notifications.reactions && (!visibleRef.current || payload.conversationId !== activeRef.current?.conversationId) && !isQuietNow(prefs.notifications)) {
+        window.desktop?.notifyIncoming("Someone reacted to your message.", { sound: prefs.notifications.sound });
+      }
     });
     socket.on("message:hidden", payload => {
       if (payload?.conversationId !== activeRef.current?.conversationId) return;
@@ -315,6 +387,26 @@ export default function App() {
     });
   }
 
+  function toggleReaction(message, emoji) {
+    socketRef.current?.emit("message:reaction", { messageId: message._id, emoji }, result => {
+      if (result?.error) setError(result.error);
+    });
+  }
+
+  function sendMedia(media) {
+    if (!active || !preferences.chat.mediaEnabled) return;
+    socketRef.current?.emit("message:send", {
+      conversationId: active.conversationId,
+      contentType: media.type,
+      mediaUrl: media.mediaUrl,
+      mediaPreviewUrl: media.previewUrl,
+      body: ""
+    }, result => {
+      if (result?.error) setError(result.error);
+      else setMediaOpen(false);
+    });
+  }
+
   async function sendMessage(e) {
     e?.preventDefault();
     const body = draft.trim();
@@ -327,7 +419,7 @@ export default function App() {
   }
   const filtered = contacts.filter(c => `${c.username} ${c.displayName || ""}`.toLowerCase().includes(query.toLowerCase()));
 
-  return <div className={`app-shell theme-${preferences.appearance.theme} density-${preferences.appearance.density} bubbles-${preferences.appearance.bubbleStyle}`} style={{ "--accent": preferences.appearance.accentColor, "--font-scale": preferences.appearance.fontScale }}>
+  return <div className={`app-shell theme-${preferences.appearance.theme} density-${preferences.appearance.density} bubbles-${preferences.appearance.bubbleStyle}`} style={{ "--accent": preferences.appearance.accentColor, "--font-scale": preferences.appearance.fontScale, "--chat-wallpaper": preferences.appearance.wallpaperColor }}>
     <header className="titlebar">
       <div className="brand-mark"><MessageCircle size={16} /></div>
       <div className="brand-title">pocket<span>chat</span><small>{me ? status : "PERSONAL MESSENGER"}</small></div>
@@ -363,11 +455,11 @@ export default function App() {
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.contentType==="gif" || m.contentType==="sticker" ? <div className={"media-message " + (m.contentType==="sticker" ? "sticker-message" : "")}><img src={m.mediaUrl} alt={m.contentType==="sticker" ? "Sticker" : "GIF"} loading="lazy"/>{m.body && <span>{m.body}</span>}</div> : m.body}</div>{preferences.chat.reactions && <div className="reaction-row">{(m.reactions || []).length>0 && Object.entries((m.reactions || []).reduce((groups,reaction)=>{groups[reaction.emoji]=(groups[reaction.emoji]||[]).concat(reaction);return groups;},{})).map(([emoji,items])=><button key={emoji} type="button" className={items.some(item=>item.userId===me.id)?"reaction-chip selected":"reaction-chip"} onClick={()=>toggleReaction(m,emoji)}>{emoji} {items.length}</button>)}{["👍","❤️","😂","😮","🔥"].map(emoji=><button key={emoji} type="button" className="quick-reaction" title={"React "+emoji} onClick={()=>toggleReaction(m,emoji)}>{emoji}</button>)}</div>}<div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body || m.mediaUrl || "")}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
-        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-picker-popover"><EmojiPicker onEmojiClick={emojiData=>setDraft(d=>d+emojiData.emoji)} width="100%" height={340} theme={preferences.appearance.theme === "light" ? "light" : "dark"} lazyLoadEmojis searchPlaceHolder="Search all emojis…" previewConfig={{showPreview:false}} /></div>}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
+        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body || (replyTo.contentType==="sticker"?"Sticker":replyTo.contentType==="gif"?"GIF":"Message")}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-picker-popover"><EmojiPicker onEmojiClick={emojiData=>setDraft(d=>d+emojiData.emoji)} width="100%" height={340} theme={preferences.appearance.theme === "light" ? "light" : "dark"} lazyLoadEmojis searchPlaceHolder="Search all emojis…" previewConfig={{showPreview:false}} /></div>}{mediaOpen && <MediaPicker token={token} onSelect={sendMedia} onClose={()=>setMediaOpen(false)} />}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><button type="button" className="icon-btn media-open-btn" title="GIFs & stickers" disabled={!preferences.chat.mediaEnabled} onClick={()=>setMediaOpen(v=>!v)}><ImageIcon size={16}/></button><textarea className="composer-input" rows={1} value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter" && (preferences.chat.enterToSend && !e.shiftKey || (e.ctrlKey || e.metaKey))){e.preventDefault();sendMessage(e);}}} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
       </section> : <section className="contacts-view">
         <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={16}/></button><button className="icon-btn logout" title="Admin panel" onClick={openAdmin}>A</button><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
         <button className="me-card profile-button" onClick={startProfileEdit} title="Edit your profile"><div className="avatar own">{me.avatarData ? <img src={me.avatarData} alt=""/> : <UserRound size={17}/>}</div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">EDIT PROFILE</span><UserCog size={15}/></button>
@@ -385,6 +477,7 @@ export default function App() {
     </>}
     {adminOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAdminOpen(false);}}><section className="profile-dialog admin-dialog"><div className="profile-heading"><div><p className="eyebrow">OWNER CONTROLS</p><h2>User management</h2></div><button type="button" className="icon-btn" onClick={()=>setAdminOpen(false)}><X size={17}/></button></div><p className="muted">Disable an account to block access, or permanently delete its account, messages, conversations and friend requests.</p><div className="admin-user-list">{adminUsers.map(u=><div className="admin-user" key={u.id}><div className="contact-meta"><strong>{u.displayName||u.username} {u.role==="admin"?"· ADMIN":""}</strong><small>@{u.username} · {u.isDisabled?"Disabled":"Active"}</small></div>{u.role!=="admin" && <><button className="icon-btn" title={u.isDisabled?"Enable":"Disable"} onClick={()=>adminDisableUser(u.id,u.isDisabled)}>{u.isDisabled?"✓":"⏸"}</button><button className="icon-btn" title="Delete user and chats" onClick={()=>adminDeleteUser(u.id,u.username)}>🗑</button></>}</div>)}</div><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>request("/api/admin/storage/expired",token,{method:"DELETE"}).then(d=>setError("Expired messages cleaned: "+d.deletedMessages)).catch(e=>setError(e.message))}>Clean expired messages</button><button type="button" className="primary-btn" onClick={()=>setAdminOpen(false)}>Done</button></div></section></div>}
     {updateOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setUpdateOpen(false);}}><section className="profile-dialog"><div className="profile-heading"><div><p className="eyebrow">POCKETCHAT</p><h2>Software updates</h2></div><button type="button" className="icon-btn" onClick={()=>setUpdateOpen(false)}><X size={17}/></button></div><div className="update-status-icon">{updateInfo.status==="current" ? <CheckCircle2 size={28}/> : updateInfo.status==="downloaded" ? <CheckCircle2 size={28}/> : <Download size={28}/>}</div><strong className="update-status-title">{updateInfo.message || "Check for updates"}</strong>{updateInfo.version && <p className="muted">Version {updateInfo.version}</p>}{updateInfo.status==="downloading" && <div className="update-progress"><span style={{width:`${updateInfo.percent || 0}%`}}/></div>}{updateInfo.status==="error" && <p className="error-text">Please check your internet connection and try again.</p>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setUpdateOpen(false)}>Close</button><button type="button" className="primary-btn" disabled={updateBusy || ["checking","downloading","current","dev"].includes(updateInfo.status)} onClick={runUpdateAction}>{updateBusy ? "Please wait…" : updateInfo.status==="downloaded" ? "Install and restart" : updateInfo.status==="available" ? "Download update" : updateInfo.status==="downloading" ? "Downloading…" : updateInfo.status==="current" ? "Up to date" : updateInfo.status==="dev" ? "Installed app only" : "Check for updates"}</button></div>{updateInfo.status==="current" && <button type="button" className="text-btn" onClick={runUpdateAction}>Check again</button>}{updateInfo.status==="dev" && <p className="muted">The update service works in the installed app, not in the development window.</p>}</section></div>}
+    {appLocked && <div className="app-lock-overlay"><form className="app-lock-card" onSubmit={unlockApp}><div className="lock-icon"><LockKeyhole size={25}/></div><p className="eyebrow">POCKETCHAT LOCKED</p><h2>Welcome back.</h2><p className="muted">Enter your account password to unlock this device.</p><label>Password<input type="password" autoFocus autoComplete="current-password" value={unlockPassword} onChange={e=>setUnlockPassword(e.target.value)} required/></label>{unlockError && <div className="error-text">{unlockError}</div>}<button className="primary-btn" type="submit" disabled={unlockBusy}>{unlockBusy ? "Unlocking…" : "Unlock PocketChat"}</button></form></div>}
     {settingsCenterOpen && <SettingsCenter value={preferences} devicePreferences={devicePreferences} onSave={savePreferences} onClose={()=>setSettingsCenterOpen(false)} />}
     {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;

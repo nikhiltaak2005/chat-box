@@ -116,6 +116,31 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   if (!afterRead.messages.find(m => m._id === ack.message._id)) throw new Error("reading a message deleted it unexpectedly");
   console.log("PASS read receipt sync and manual-retention rule");
 
+  const reactionEvent = waitForEvent(bobSocket, "message:reaction", p => p.messageId === ack.message._id && (p.reactions || []).some(r => r.userId === bob.user.id && r.emoji === "🔥"));
+  const reactionAck = await new Promise(resolve => bobSocket.emit("message:reaction", { messageId: ack.message._id, emoji: "🔥" }, resolve));
+  if (reactionAck?.error) throw new Error(reactionAck.error);
+  await reactionEvent;
+  const reactionHistory = await req(`/api/conversations/${alice.user.id}`, { token: bob.token });
+  if (!reactionHistory.messages.find(m => m._id === ack.message._id)?.reactions?.some(r => r.emoji === "🔥")) throw new Error("reaction was not persisted");
+  console.log("PASS message reactions persist and sync");
+
+  const mediaIncoming = waitForEvent(bobSocket, "message:new", m => m.contentType === "gif");
+  const mediaAck = await new Promise(resolve => aliceSocket.emit("message:send", {
+    conversationId: conv.conversation._id,
+    contentType: "gif",
+    mediaUrl: "https://media0.giphy.com/media/example/giphy.gif",
+    mediaPreviewUrl: "https://media0.giphy.com/media/example/200w.gif",
+    body: ""
+  }, resolve));
+  if (mediaAck?.error) throw new Error(mediaAck.error);
+  const mediaReceived = await mediaIncoming;
+  if (mediaReceived.mediaUrl !== "https://media0.giphy.com/media/example/giphy.gif") throw new Error("media URL was not delivered");
+  console.log("PASS GIF message payload validation and delivery");
+
+  const mediaConfigResponse = await fetch(API + "/api/media/giphy", { headers: { Authorization: `Bearer ${alice.token}` } });
+  if (![200, 503].includes(mediaConfigResponse.status)) throw new Error("unexpected GIF provider response: " + mediaConfigResponse.status);
+  console.log("PASS GIF provider endpoint responds safely when not configured");
+
   const hiddenIncoming = waitForEvent(bobSocket, "message:new", m => m.body === "delete for me test");
   const hiddenAck = await new Promise(resolve => aliceSocket.emit("message:send", { conversationId: conv.conversation._id, body: "delete for me test" }, resolve));
   if (hiddenAck?.error) throw new Error(hiddenAck.error);
