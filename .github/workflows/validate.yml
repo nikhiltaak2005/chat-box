@@ -21,5 +21,10 @@ jobs:
         env:
           VITE_API_URL: https://personal-messenger-api.onrender.com
         run: npm run build:ui
-      - name: Check backend syntax
-        run: node --check server/index.js
+      - name: Check backend and Electron syntax
+        run: |
+          node --check server/index.js
+          node --check electron/main.cjs
+          node --check electron/preload.cjs
+      - name: Check floating pet script syntax
+        run: node -e "const fs=require('fs'); const html=fs.readFileSync('electron/pet.html','utf8'); const match=html.match(/<script>([\\s\\S]*?)<\\/script>/i); if(!match) throw new Error('Pet script missing'); new Function(match[1]); console.log('Pet script syntax OK');"
