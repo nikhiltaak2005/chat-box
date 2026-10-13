@@ -33,6 +33,7 @@ export default function App() {
   const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
   const friendRequestsRef = useRef(friendRequests);
+  const peopleLoadedRef = useRef(false);
   const [friendUsername, setFriendUsername] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
@@ -111,6 +112,7 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !me) return;
+    peopleLoadedRef.current = false;
     const refreshPeople = async () => {
       try {
         const [people, friends] = await Promise.all([
@@ -121,11 +123,12 @@ export default function App() {
         const nextRequests = friends.requests || [];
         const existingIds = new Set(friendRequestsRef.current.map(request => request.id));
         const newIncoming = nextRequests.filter(request => request.status === "pending" && request.recipientId === me.id && !existingIds.has(request.id));
-        if (newIncoming.length && !visibleRef.current && preferencesRef.current.notifications.enabled && preferencesRef.current.notifications.friendRequests && !isQuietNow(preferencesRef.current.notifications)) {
+        if (peopleLoadedRef.current && newIncoming.length && !visibleRef.current && preferencesRef.current.notifications.enabled && preferencesRef.current.notifications.friendRequests && !isQuietNow(preferencesRef.current.notifications)) {
           const personName = newIncoming[0].person?.username || "someone";
           window.desktop?.notifyIncoming("New friend request from @" + personName, { sound: preferencesRef.current.notifications.sound });
         }
         setFriendRequests(nextRequests);
+        peopleLoadedRef.current = true;
       } catch (e) {
         setError(e.message);
       }
