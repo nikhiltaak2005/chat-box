@@ -47,12 +47,9 @@ export default function App() {
   const [profileAvatar, setProfileAvatar] = useState(me?.avatarData || "");
   const [profileSaving, setProfileSaving] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCenterOpen, setSettingsCenterOpen] = useState(false);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const preferencesRef = useRef(preferences);
-  const [autoDeleteSeconds, setAutoDeleteSeconds] = useState(0);
-  const [settingsSaving, setSettingsSaving] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState({ status: "idle", message: "Check for updates", version: "", percent: 0 });
   const [updateBusy, setUpdateBusy] = useState(false);
