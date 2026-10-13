@@ -135,7 +135,8 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   const deleteAck = await new Promise(resolve => aliceSocket.emit("message:delete", { messageId: ack.message._id, scope: "everyone" }, resolve));
   if (deleteAck?.error) throw new Error(deleteAck.error);
   await Promise.all([deletedOnBob, deletedOnAlice]);
-  const finalHistory = await req(`/api/conversations/${alice.user.id}`, { token: bob.token });
+  console.log("DEBUG user ids", alice.user.id, bob.user.id);
+  const finalHistory = await req(`/api/conversations/${bob.user.id}`, { token: alice.token });
   if (finalHistory.messages.some(m => m._id === ack.message._id)) throw new Error("Delete for everyone did not remove the message");
   console.log("PASS Delete for everyone syncs to both participants");
 
