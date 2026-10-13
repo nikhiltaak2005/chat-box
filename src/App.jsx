@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2 } from "lucide-react";
+import EmojiPicker from "emoji-picker-react";
+import SettingsCenter, { DEFAULT_DEVICE_PREFERENCES, DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2 } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -27,6 +29,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [query, setQuery] = useState("");
   const [contacts, setContacts] = useState([]);
+  const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
   const [friendUsername, setFriendUsername] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -45,9 +48,13 @@ export default function App() {
   const [profileAvatar, setProfileAvatar] = useState(me?.avatarData || "");
   const [profileSaving, setProfileSaving] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [autoDeleteSeconds, setAutoDeleteSeconds] = useState(0);
-  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsCenterOpen, setSettingsCenterOpen] = useState(false);
+  const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
+  const [devicePreferences, setDevicePreferences] = useState(() => {
+    try { const saved = JSON.parse(localStorage.getItem("pm_device_preferences") || "null"); return { ...DEFAULT_DEVICE_PREFERENCES, ...(saved || {}), pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(saved?.pet || {}) } }; }
+    catch { return DEFAULT_DEVICE_PREFERENCES; }
+  });
+  const preferencesRef = useRef(preferences);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState({ status: "idle", message: "Check for updates", version: "", percent: 0 });
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -59,6 +66,12 @@ export default function App() {
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { visibleRef.current = chatVisible; }, [chatVisible]);
+  useEffect(() => { preferencesRef.current = preferences; }, [preferences]);
+  useEffect(() => {
+    localStorage.setItem("pm_device_preferences", JSON.stringify(devicePreferences));
+    window.desktop?.setPetSettings?.(devicePreferences.pet);
+    window.desktop?.setLaunchAtStartup?.(devicePreferences.launchAtStartup);
+  }, [devicePreferences]);
 
   useEffect(() => { window.desktop?.setAlwaysOnTop(true); }, []);
   useEffect(() => {
@@ -71,6 +84,26 @@ export default function App() {
     return window.desktop.onChatVisibility(setChatVisible);
   }, []);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  useEffect(() => {
+    if (!token || !me) return;
+    request("/api/preferences", token).then(data => setPreferences(data.preferences || DEFAULT_PREFERENCES)).catch(e => setError(e.message));
+  }, [token, me]);
+
+  async function savePreferences(next, nextDevicePreferences) {
+    const data = await request("/api/preferences", token, { method: "PATCH", body: JSON.stringify(next) });
+    setPreferences(data.preferences || next);
+    if (nextDevicePreferences) setDevicePreferences(nextDevicePreferences);
+  }
+
+  function isQuietNow(settings) {
+    if (!settings?.quietHoursEnabled) return false;
+    const now = new Date();
+    const current = now.getHours() * 60 + now.getMinutes();
+    const toMinutes = value => { const [h, m] = String(value || "00:00").split(":").map(Number); return h * 60 + m; };
+    const start = toMinutes(settings.quietStart), end = toMinutes(settings.quietEnd);
+    return start === end ? true : start < end ? current >= start && current < end : current >= start || current < end;
+  }
 
   useEffect(() => {
     if (!token || !me) return;
@@ -103,6 +136,7 @@ export default function App() {
     socket.on("connect", () => {
       console.log("[Socket] Connected:", socket.id);
       setStatus("Online");
+      socket.emit("presence:sync");
     });
     socket.on("disconnect", reason => {
       console.log("[Socket] Disconnected:", reason);
@@ -111,6 +145,11 @@ export default function App() {
     socket.on("connect_error", err => {
       console.error("[Socket] Connection error:", err.message);
       setStatus("Offline");
+    });
+    socket.on("presence:initial", payload => setOnlineUserIds(payload?.onlineUserIds || []));
+    socket.on("presence:changed", payload => {
+      if (!payload?.userId) return;
+      setOnlineUserIds(prev => payload.online ? (prev.includes(payload.userId) ? prev : [...prev, payload.userId]) : prev.filter(id => id !== payload.userId));
     });
     socket.on("unread:count", count => {
       window.desktop?.setUnreadCount(count);
@@ -123,9 +162,10 @@ export default function App() {
         return [...prev, msg];
       });
       if (msg.senderId !== me.id) {
-        // The main process only displays a Windows notification when the chat is hidden.
-        if (!visibleRef.current || !isCurrentConversation) {
-          window.desktop?.notifyIncoming(msg.body || "You received a new message.");
+        // Notifications never mark a message as read. Preferences are account-synced.
+        if ((!visibleRef.current || !isCurrentConversation) && preferencesRef.current.notifications.enabled && !isQuietNow(preferencesRef.current.notifications)) {
+          const preview = preferencesRef.current.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferencesRef.current.notifications.preview === "sender" ? ("New message from " + (activeRef.current?.username || "a contact")) : "You received a new message.";
+          window.desktop?.notifyIncoming(preview, { sound: preferencesRef.current.notifications.sound });
         }
       }
       setContacts(prev => {
@@ -139,8 +179,10 @@ export default function App() {
       const ids = new Set(payload.messageIds || []);
       setMessages(prev => prev.map(message => ids.has(message._id) ? { ...message, readAt: payload.readAt } : message));
     });
-    socket.on("conversation:settings", payload => {
-      if (payload?.conversationId === activeRef.current?.conversationId) setAutoDeleteSeconds(Number(payload.autoDeleteSeconds || 0));
+    socket.on("message:hidden", payload => {
+      if (payload?.conversationId !== activeRef.current?.conversationId) return;
+      const ids = new Set(payload.messageIds || []);
+      setMessages(prev => prev.filter(message => !ids.has(message._id)));
     });
     socket.on("message:deleted", payload => {
       if (payload?.conversationId !== activeRef.current?.conversationId) return;
@@ -242,7 +284,6 @@ export default function App() {
     try {
       const data = await request(`/api/conversations/${person._id}`, token);
       readRequestRef.current = "";
-      setAutoDeleteSeconds(Number(data.conversation.autoDeleteSeconds || 0));
       setActive({ ...person, conversationId: data.conversation._id });
       setMessages(data.messages || []); setReplyTo(null);
     } catch (e) { setError(e.message); }
@@ -266,13 +307,12 @@ export default function App() {
     } finally { setUpdateBusy(false); }
   }
 
-  async function saveChatSettings(e) {
-    e.preventDefault(); if (!active) return;
-    setSettingsSaving(true); setError("");
-    try {
-      const data = await request(`/api/conversations/${active.conversationId}/settings`, token, { method: "PATCH", body: JSON.stringify({ autoDeleteSeconds }) });
-      setAutoDeleteSeconds(Number(data.autoDeleteSeconds || 0)); setSettingsOpen(false);
-    } catch (e) { setError(e.message); } finally { setSettingsSaving(false); }
+  async function deleteMessage(message, scope) {
+    if (!message?._id) return;
+    if (scope === "everyone" && !window.confirm("Delete this message for everyone? This cannot be undone.")) return;
+    socketRef.current?.emit("message:delete", { messageId: message._id, scope }, result => {
+      if (result?.error) setError(result.error);
+    });
   }
 
   async function sendMessage(e) {
@@ -287,7 +327,7 @@ export default function App() {
   }
   const filtered = contacts.filter(c => `${c.username} ${c.displayName || ""}`.toLowerCase().includes(query.toLowerCase()));
 
-  return <div className="app-shell">
+  return <div className={`app-shell theme-${preferences.appearance.theme} density-${preferences.appearance.density} bubbles-${preferences.appearance.bubbleStyle}`} style={{ "--accent": preferences.appearance.accentColor, "--font-scale": preferences.appearance.fontScale }}>
     <header className="titlebar">
       <div className="brand-mark"><MessageCircle size={16} /></div>
       <div className="brand-title">pocket<span>chat</span><small>{me ? status : "PERSONAL MESSENGER"}</small></div>
@@ -318,25 +358,25 @@ export default function App() {
           <button className="icon-btn back" onClick={()=>setActive(null)}><ArrowLeft size={17}/></button>
           <div className="avatar">{active.avatarData ? <img src={active.avatarData} alt=""/> : (active.displayName || active.username).slice(0,1).toUpperCase()}</div>
           <div className="contact-meta"><strong>{active.displayName || active.username}</strong><small>@{active.username}</small></div>
-          <button className="icon-btn" title="Disappearing messages settings" onClick={()=>setSettingsOpen(true)}><Settings size={15}/></button>
+          <button className="icon-btn" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={15}/></button>
           <div className="online-dot" title={status}/>
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button></div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
-        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-strip">{["😀","😂","🥹","😍","😘","👍","❤️","🔥","🎉","😭","🙏","✨","😎","💯","👋","🤝"].map(emoji=><button type="button" key={emoji} onClick={()=>setDraft(d=>d+emoji)}>{emoji}</button>)}</div>}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
+        {replyTo && <div className="reply-preview"><div><strong>Replying to message</strong><span>{replyTo.body}</span></div><button type="button" onClick={()=>setReplyTo(null)}><X size={15}/></button></div>}{emojiOpen && <div className="emoji-picker-popover"><EmojiPicker onEmojiClick={emojiData=>setDraft(d=>d+emojiData.emoji)} width="100%" height={340} theme={preferences.appearance.theme === "light" ? "light" : "dark"} lazyLoadEmojis searchPlaceHolder="Search all emojis…" previewConfig={{showPreview:false}} /></div>}<form className="composer" onSubmit={sendMessage}><button type="button" className="icon-btn" title="Emoji" onClick={()=>setEmojiOpen(v=>!v)}>😊</button><input value={draft} onChange={e=>setDraft(e.target.value)} placeholder={replyTo ? "Write a reply…" : "Write a message…"} maxLength={4000}/><button className="send-btn" disabled={!draft.trim()} aria-label="Send message"><Send size={16}/></button></form>
       </section> : <section className="contacts-view">
-        <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Admin panel" onClick={openAdmin}>A</button><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
+        <div className="welcome-row"><div><p className="eyebrow">YOUR PEOPLE</p><h2>Messages<span>.</span></h2></div><button className="icon-btn logout" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={16}/></button><button className="icon-btn logout" title="Admin panel" onClick={openAdmin}>A</button><button className="icon-btn logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div>
         <button className="me-card profile-button" onClick={startProfileEdit} title="Edit your profile"><div className="avatar own">{me.avatarData ? <img src={me.avatarData} alt=""/> : <UserRound size={17}/>}</div><div className="contact-meta"><strong>{me.displayName || me.username}</strong><small>@{me.username}</small></div><span className="you-badge">EDIT PROFILE</span><UserCog size={15}/></button>
         <form className="searchbox" onSubmit={sendFriendRequest}><Search size={15}/><input value={friendUsername} onChange={e=>setFriendUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="Add by exact username…" minLength={3} maxLength={24}/><button className="icon-btn" type="submit" title="Send friend request"><Plus size={15}/></button></form>
         {friendRequests.some(r=>r.status==="pending" && r.recipientId===me.id) && <><div className="section-label">INCOMING REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).length}</span></div><div className="contact-list request-list">{friendRequests.filter(r=>r.status==="pending" && r.recipientId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username} wants to connect</small></div><button className="primary-btn" onClick={()=>answerFriendRequest(r.id,"accept")}>Accept</button><button className="icon-btn" onClick={()=>answerFriendRequest(r.id,"reject")} title="Reject request">×</button></div>)}</div></>}
         {friendRequests.some(r=>r.status==="pending" && r.senderId===me.id) && <><div className="section-label">SENT REQUESTS <span>{friendRequests.filter(r=>r.status==="pending" && r.senderId===me.id).length}</span></div><div className="contact-list request-list">{friendRequests.filter(r=>r.status==="pending" && r.senderId===me.id).map(r=><div className="contact-row" key={r.id}><div className="contact-meta"><strong>{r.person.displayName||r.person.username}</strong><small>@{r.person.username} · Waiting for acceptance</small></div><span className="request-pending">Pending</span></div>)}</div></>}
         <div className="section-label">PEOPLE <span>{filtered.length}</span></div>
         <div className="contact-list">
-          {filtered.map(c=>{const pending=friendRequests.find(r=>r.status==="pending" && ((r.senderId===me.id && r.person.username===c.username)||(r.recipientId===me.id && r.person.username===c.username)));return <button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : pending ? (pending.recipientId===me.id ? answerFriendRequest(pending.id,"accept") : setError("Friend request already sent. Waiting for @"+c.username+" to accept.")) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? "Friend — open chat" : pending ? (pending.recipientId===me.id ? "Accept incoming request" : "Request sent · waiting") : "Add friend"}</small></div>{c.isFriend ? <MessageCircle size={15} className="open-arrow"/> : pending ? <span className="request-pending">{pending.recipientId===me.id ? "Accept" : "Sent"}</span> : <Plus size={15} className="open-arrow"/>}</button>})}
+          {filtered.map(c=>{const pending=friendRequests.find(r=>r.status==="pending" && ((r.senderId===me.id && r.person.username===c.username)||(r.recipientId===me.id && r.person.username===c.username)));return <button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : pending ? (pending.recipientId===me.id ? answerFriendRequest(pending.id,"accept") : setError("Friend request already sent. Waiting for @"+c.username+" to accept.")) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? (onlineUserIds.includes(c._id) ? "Online" : c.lastSeenAt ? ("Last seen " + new Date(c.lastSeenAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })) : "Offline") : pending ? (pending.recipientId===me.id ? "Accept incoming request" : "Request sent · waiting") : "Add friend"}</small></div>{c.isFriend ? <MessageCircle size={15} className="open-arrow"/> : pending ? <span className="request-pending">{pending.recipientId===me.id ? "Accept" : "Sent"}</span> : <Plus size={15} className="open-arrow"/>}</button>})}
           {filtered.length===0 && <div className="empty-people"><UserRound size={22}/><strong>No people yet</strong><span>Create another account on a second device/server to start a conversation.</span></div>}
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
@@ -345,7 +385,7 @@ export default function App() {
     </>}
     {adminOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAdminOpen(false);}}><section className="profile-dialog admin-dialog"><div className="profile-heading"><div><p className="eyebrow">OWNER CONTROLS</p><h2>User management</h2></div><button type="button" className="icon-btn" onClick={()=>setAdminOpen(false)}><X size={17}/></button></div><p className="muted">Disable an account to block access, or permanently delete its account, messages, conversations and friend requests.</p><div className="admin-user-list">{adminUsers.map(u=><div className="admin-user" key={u.id}><div className="contact-meta"><strong>{u.displayName||u.username} {u.role==="admin"?"· ADMIN":""}</strong><small>@{u.username} · {u.isDisabled?"Disabled":"Active"}</small></div>{u.role!=="admin" && <><button className="icon-btn" title={u.isDisabled?"Enable":"Disable"} onClick={()=>adminDisableUser(u.id,u.isDisabled)}>{u.isDisabled?"✓":"⏸"}</button><button className="icon-btn" title="Delete user and chats" onClick={()=>adminDeleteUser(u.id,u.username)}>🗑</button></>}</div>)}</div><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>request("/api/admin/storage/expired",token,{method:"DELETE"}).then(d=>setError("Expired messages cleaned: "+d.deletedMessages)).catch(e=>setError(e.message))}>Clean expired messages</button><button type="button" className="primary-btn" onClick={()=>setAdminOpen(false)}>Done</button></div></section></div>}
     {updateOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setUpdateOpen(false);}}><section className="profile-dialog"><div className="profile-heading"><div><p className="eyebrow">POCKETCHAT</p><h2>Software updates</h2></div><button type="button" className="icon-btn" onClick={()=>setUpdateOpen(false)}><X size={17}/></button></div><div className="update-status-icon">{updateInfo.status==="current" ? <CheckCircle2 size={28}/> : updateInfo.status==="downloaded" ? <CheckCircle2 size={28}/> : <Download size={28}/>}</div><strong className="update-status-title">{updateInfo.message || "Check for updates"}</strong>{updateInfo.version && <p className="muted">Version {updateInfo.version}</p>}{updateInfo.status==="downloading" && <div className="update-progress"><span style={{width:`${updateInfo.percent || 0}%`}}/></div>}{updateInfo.status==="error" && <p className="error-text">Please check your internet connection and try again.</p>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setUpdateOpen(false)}>Close</button><button type="button" className="primary-btn" disabled={updateBusy || ["checking","downloading","current","dev"].includes(updateInfo.status)} onClick={runUpdateAction}>{updateBusy ? "Please wait…" : updateInfo.status==="downloaded" ? "Install and restart" : updateInfo.status==="available" ? "Download update" : updateInfo.status==="downloading" ? "Downloading…" : updateInfo.status==="current" ? "Up to date" : updateInfo.status==="dev" ? "Installed app only" : "Check for updates"}</button></div>{updateInfo.status==="current" && <button type="button" className="text-btn" onClick={runUpdateAction}>Check again</button>}{updateInfo.status==="dev" && <p className="muted">The update service works in the installed app, not in the development window.</p>}</section></div>}
-    {settingsOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSettingsOpen(false);}}><form className="profile-dialog" onSubmit={saveChatSettings}><div className="profile-heading"><div><p className="eyebrow">SNAPCHAT-STYLE</p><h2>Disappearing messages</h2></div><button type="button" className="icon-btn" onClick={()=>setSettingsOpen(false)}><X size={17}/></button></div><label>Delete messages<select className="setting-select" value={autoDeleteSeconds} onChange={e=>setAutoDeleteSeconds(Number(e.target.value))}><option value={0}>Off — keep messages</option><option value={-1}>Immediately after seen</option><option value={5}>5 seconds after seen</option><option value={60}>1 minute after seen</option><option value={3600}>1 hour after seen</option><option value={86400}>24 hours after seen</option></select></label><p className="muted">The timer starts only after the recipient opens this conversation and the message is marked seen. If their chat is minimized or hidden, it stays unread. This setting applies to this conversation on both sides.</p><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setSettingsOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={settingsSaving}>{settingsSaving ? "Saving…" : "Save settings"}</button></div></form></div>}
+    {settingsCenterOpen && <SettingsCenter value={preferences} devicePreferences={devicePreferences} onSave={savePreferences} onClose={()=>setSettingsCenterOpen(false)} />}
     {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;
 }

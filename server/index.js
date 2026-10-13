@@ -19,13 +19,17 @@ const ALLOWED_ORIGINS = new Set([
   "http://127.0.0.1:5173"
 ]);
 
-const JWT_SECRET =
-  process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 16
-    ? process.env.JWT_SECRET
-    : "dev-only-insecure-secret-change-me-32-chars";
+const configuredJwtSecret = String(process.env.JWT_SECRET || "").trim();
+const productionRuntime = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
+if (productionRuntime && (configuredJwtSecret.length < 16 || configuredJwtSecret.startsWith("dev-only"))) {
+  throw new Error("Production requires a private JWT_SECRET with at least 16 characters. Configure it in the hosting environment.");
+}
+const JWT_SECRET = configuredJwtSecret.length >= 16
+  ? configuredJwtSecret
+  : "dev-only-insecure-secret-change-me-32-chars";
 
-if (JWT_SECRET.startsWith("dev-only")) {
-  console.warn("[warn] Using the development JWT secret. Set JWT_SECRET in server/.env before deploying.");
+if (!productionRuntime && JWT_SECRET.startsWith("dev-only")) {
+  console.warn("[warn] Using the development JWT secret. Configure JWT_SECRET before deploying.");
 }
 
 // Allow browser clients from the configured UI origin, and non-browser clients
@@ -47,6 +51,8 @@ const userSchema = new Schema(
     username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24 },
     displayName: { type: String, trim: true, maxlength: 40, default: "" },
     avatarData: { type: String, default: "", maxlength: 1500000 },
+    lastSeenAt: { type: Date, default: null },
+    preferences: { type: Schema.Types.Mixed, default: {} },
     passwordHash: { type: String, required: true }
   },
   { timestamps: true }
@@ -56,7 +62,6 @@ const conversationSchema = new Schema(
   {
     participants: { type: [Schema.Types.ObjectId], required: true, index: true },
     key: { type: String, required: true, unique: true },
-    autoDeleteSeconds: { type: Number, default: 0, enum: [0, -1, 5, 60, 3600, 86400] }
   },
   { timestamps: true }
 );
@@ -69,7 +74,8 @@ const messageSchema = new Schema(
     body: { type: String, required: true, trim: true, maxlength: 4000 },
     replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
     readAt: { type: Date, default: null, index: true },
-    deleteAt: { type: Date, default: null, index: true }
+    deleteAt: { type: Date, default: null, index: true },
+    hiddenFor: { type: [Schema.Types.ObjectId], default: [] }
   },
   { timestamps: true }
 );
@@ -98,14 +104,59 @@ function verifyToken(token) {
   }
 }
 
+const DEFAULT_PREFERENCES = {
+  appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
+  notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
+  privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
+};
+
+function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
+  const source = input && typeof input === "object" ? input : {};
+  const result = {
+    appearance: { ...DEFAULT_PREFERENCES.appearance, ...(base.appearance || {}) },
+    notifications: { ...DEFAULT_PREFERENCES.notifications, ...(base.notifications || {}) },
+    privacy: { ...DEFAULT_PREFERENCES.privacy, ...(base.privacy || {}) }
+  };
+  const appearance = source.appearance || {};
+  if (["dark", "light", "system"].includes(appearance.theme)) result.appearance.theme = appearance.theme;
+  if (typeof appearance.accentColor === "string" && /^#[0-9a-f]{6}$/i.test(appearance.accentColor)) result.appearance.accentColor = appearance.accentColor;
+  if ([0.9, 1, 1.1, 1.2].includes(Number(appearance.fontScale))) result.appearance.fontScale = Number(appearance.fontScale);
+  if (["compact", "comfortable"].includes(appearance.density)) result.appearance.density = appearance.density;
+  if (["rounded", "soft", "square"].includes(appearance.bubbleStyle)) result.appearance.bubbleStyle = appearance.bubbleStyle;
+  const notifications = source.notifications || {};
+  for (const key of ["enabled", "sound", "friendRequests", "reactions", "quietHoursEnabled"]) {
+    if (typeof notifications[key] === "boolean") result.notifications[key] = notifications[key];
+  }
+  if (["full", "sender", "hidden"].includes(notifications.preview)) result.notifications.preview = notifications.preview;
+  for (const key of ["quietStart", "quietEnd"]) {
+    if (typeof notifications[key] === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(notifications[key])) result.notifications[key] = notifications[key];
+  }
+  const privacy = source.privacy || {};
+  for (const key of ["readReceipts", "showOnline"]) {
+    if (typeof privacy[key] === "boolean") result.privacy[key] = privacy[key];
+  }
+  if (["everyone", "contacts", "nobody"].includes(privacy.lastSeen)) result.privacy.lastSeen = privacy.lastSeen;
+  if (["everyone", "contacts", "nobody"].includes(privacy.profileVisibility)) result.privacy.profileVisibility = privacy.profileVisibility;
+  return result;
+}
+
 // Shape returned to the client on login/register (client reads user.id).
 function publicSelf(user) {
-  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "", role: user.role || "user" };
+  return { id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "", role: user.role || "user", preferences: normalizePreferences(user.preferences) };
 }
 
 // Shape returned by /api/users (client reads contact._id).
-function publicContact(user) {
-  return { _id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "" };
+function publicContact(user, { isFriend = false } = {}) {
+  const privacy = normalizePreferences(user.preferences).privacy;
+  const showDetails = privacy.profileVisibility === "everyone" || (privacy.profileVisibility === "contacts" && isFriend);
+  const canSeeLastSeen = privacy.lastSeen === "everyone" || (privacy.lastSeen === "contacts" && isFriend);
+  return {
+    _id: user._id.toString(),
+    username: user.username,
+    displayName: showDetails ? (user.displayName || "") : "",
+    avatarData: showDetails ? (user.avatarData || "") : "",
+    lastSeenAt: canSeeLastSeen ? (user.lastSeenAt || null) : null
+  };
 }
 
 function conversationKey(a, b) {
@@ -116,7 +167,7 @@ function isValidId(value) {
   return typeof value === "string" && mongoose.Types.ObjectId.isValid(value);
 }
 
-function serializeMessage(m) {
+function serializeMessage(m, hideReadAt = false) {
   return {
     _id: m._id.toString(),
     conversationId: m.conversationId.toString(),
@@ -125,13 +176,13 @@ function serializeMessage(m) {
     body: m.body,
     replyTo: m.replyTo ? m.replyTo.toString() : null,
     createdAt: m.createdAt,
-    readAt: m.readAt || null,
+    readAt: hideReadAt ? null : (m.readAt || null),
     deleteAt: m.deleteAt || null
   };
 }
 
 async function publishUnreadCount(userId) {
-  const count = await Message.countDocuments({ recipientId: userId, readAt: null });
+  const count = await Message.countDocuments({ recipientId: userId, readAt: null, hiddenFor: { $ne: userId } });
   io.to(userId.toString()).emit("unread:count", count);
   return count;
 }
@@ -251,6 +302,36 @@ app.patch("/api/profile", requireAuth, async (req, res, next) => {
   }
 });
 
+app.get("/api/preferences", requireAuth, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.userId).select("preferences");
+    if (!user) return res.status(404).json({ error: "User not found." });
+    return res.json({ preferences: normalizePreferences(user.preferences) });
+  } catch (err) { return next(err); }
+});
+
+app.patch("/api/preferences", requireAuth, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.userId).select("preferences");
+    if (!user) return res.status(404).json({ error: "User not found." });
+    const previous = normalizePreferences(user.preferences);
+    const preferences = normalizePreferences(req.body, previous);
+    user.preferences = preferences;
+    await user.save();
+    if (previous.privacy.showOnline !== preferences.privacy.showOnline) {
+      const hasConnectedSocket = Boolean(io.sockets.adapter.rooms.get(req.userId)?.size);
+      if (preferences.privacy.showOnline && hasConnectedSocket) {
+        onlineUsers.add(req.userId);
+        await notifyFriendsPresence(req.userId, true);
+      } else {
+        onlineUsers.delete(req.userId);
+        await notifyFriendsPresence(req.userId, false);
+      }
+    }
+    return res.json({ preferences });
+  } catch (err) { return next(err); }
+});
+
 function requireAdmin(req, res, next) {
   User.findById(req.userId).select("role isDisabled").then(user => {
     if (!user || user.isDisabled) return res.status(403).json({ error: "Account unavailable." });
@@ -263,7 +344,7 @@ app.get("/api/users/search", requireAuth, async (req, res, next) => {
   try {
     const username = String(req.query?.username || "").trim().toLowerCase();
     if (!/^[a-z0-9_]{3,24}$/.test(username)) return res.json({ users: [] });
-    const users = await User.find({ username: { $regex: "^" + username }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").limit(20);
+    const users = await User.find({ username: { $regex: "^" + username }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt").limit(20);
     return res.json({ users: users.map(publicContact) });
   } catch (err) { return next(err); }
 });
@@ -272,9 +353,9 @@ app.get("/api/friends", requireAuth, async (req, res, next) => {
   try {
     const requests = await FriendRequest.find({ $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).sort({ createdAt: -1 }).limit(200);
     const ids = [...new Set(requests.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()))];
-    const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData");
-    const map = new Map(users.map(u => [u._id.toString(), publicContact(u)]));
-    return res.json({ requests: requests.map(r => ({ id: r._id.toString(), senderId: r.senderId.toString(), recipientId: r.recipientId.toString(), status: r.status, createdAt: r.createdAt, person: map.get((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()) })).filter(r => r.person) });
+    const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt");
+    const map = new Map(users.map(u => [u._id.toString(), u]));
+    return res.json({ requests: requests.map(r => ({ id: r._id.toString(), senderId: r.senderId.toString(), recipientId: r.recipientId.toString(), status: r.status, createdAt: r.createdAt, person: map.has((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()) ? publicContact(map.get((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()), { isFriend: r.status === "accepted" }) : null })).filter(r => r.person) });
   } catch (err) { return next(err); }
 });
 
@@ -316,6 +397,7 @@ app.patch("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, res
     const isDisabled = Boolean(req.body?.isDisabled);
     const user = await User.findByIdAndUpdate(req.params.userId, { $set: { isDisabled } }, { new: true }).select("username isDisabled");
     if (!user) return res.status(404).json({ error: "User not found." });
+    if (user.isDisabled) io.in(user._id.toString()).disconnectSockets(true);
     return res.json({ id: user._id.toString(), username: user.username, isDisabled: user.isDisabled });
   } catch (err) { return next(err); }
 });
@@ -327,6 +409,7 @@ app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, re
     if (!user) return res.status(404).json({ error: "User not found." });
     const conversations = await Conversation.find({ participants: user._id }).select("_id");
     const conversationIds = conversations.map(c => c._id);
+    io.in(user._id.toString()).disconnectSockets(true);
     await Message.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }, { conversationId: { $in: conversationIds } }] });
     await Conversation.deleteMany({ _id: { $in: conversationIds } });
     await FriendRequest.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }] });
@@ -345,25 +428,11 @@ app.get("/api/users", requireAuth, async (req, res, next) => {
     // the UI uses isFriend to offer a friend request for everyone else.
     const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).select("senderId recipientId");
     const acceptedIds = new Set(accepted.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()));
-    const users = await User.find({ _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").sort({ username: 1 }).limit(1000);
-    return res.json({ users: users.map(user => ({ ...publicContact(user), isFriend: acceptedIds.has(user._id.toString()) })) });
+    const users = await User.find({ _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt").sort({ username: 1 }).limit(1000);
+    return res.json({ users: users.map(user => ({ ...publicContact(user, { isFriend: acceptedIds.has(user._id.toString()) }), isFriend: acceptedIds.has(user._id.toString()) })) });
   } catch (err) {
     return next(err);
   }
-});
-
-app.patch("/api/conversations/:conversationId/settings", requireAuth, async (req, res, next) => {
-  try {
-    const seconds = Number(req.body?.autoDeleteSeconds);
-    if (![0, -1, 5, 60, 3600, 86400].includes(seconds)) return res.status(400).json({ error: "Invalid auto-delete setting." });
-    const conversation = await Conversation.findById(req.params.conversationId);
-    if (!conversation) return res.status(404).json({ error: "Conversation not found." });
-    if (!conversation.participants.some(id => id.toString() === req.userId)) return res.status(403).json({ error: "Not a participant in this conversation." });
-    conversation.autoDeleteSeconds = seconds;
-    await conversation.save();
-    io.to(conversation.participants[0].toString()).to(conversation.participants[1].toString()).emit("conversation:settings", { conversationId: conversation._id.toString(), autoDeleteSeconds: seconds });
-    return res.json({ autoDeleteSeconds: seconds });
-  } catch (err) { return next(err); }
 });
 
 app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
@@ -372,7 +441,7 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     if (!isValidId(personId)) return res.status(400).json({ error: "Invalid person id." });
     if (personId === req.userId) return res.status(400).json({ error: "You cannot message yourself." });
 
-    const person = await User.findById(personId).select("username displayName");
+    const person = await User.findById(personId).select("username displayName preferences");
     if (!person || person.isDisabled) return res.status(404).json({ error: "Person not found." });
     const friendship = await FriendRequest.findOne({ status: "accepted", $or: [{ senderId: req.userId, recipientId: personId }, { senderId: personId, recipientId: req.userId }] });
     if (!friendship) return res.status(403).json({ error: "Accept a friend request before chatting." });
@@ -380,17 +449,17 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     const conversation = await findOrCreateConversation(req.userId, personId);
     if (!conversation) return res.status(500).json({ error: "Could not open conversation." });
 
-    const messages = await Message.find({ conversationId: conversation._id })
+    const messages = await Message.find({ conversationId: conversation._id, hiddenFor: { $ne: req.userId } })
       .sort({ createdAt: 1 })
       .limit(500);
+    const hidePeerReadReceipts = !normalizePreferences(person.preferences).privacy.readReceipts;
 
     return res.json({
       conversation: {
         _id: conversation._id.toString(),
         participants: conversation.participants.map((id) => id.toString()),
-        autoDeleteSeconds: Number(conversation.autoDeleteSeconds || 0)
       },
-      messages: messages.map(serializeMessage)
+      messages: messages.map(message => serializeMessage(message, hidePeerReadReceipts && message.senderId.toString() === req.userId))
     });
   } catch (err) {
     return next(err);
@@ -408,31 +477,65 @@ app.use((err, _req, res, _next) => {
 // ---------------------------------------------------------------------------
 // HTTP + Socket.IO
 // ---------------------------------------------------------------------------
-setInterval(async () => {
-  try {
-    const expired = await Message.find({ deleteAt: { $ne: null, $lte: new Date() } }).select("_id conversationId");
-    if (!expired.length) return;
-    await Message.deleteMany({ _id: { $in: expired.map(message => message._id) } });
-    const grouped = new Map();
-    for (const message of expired) { const key = message.conversationId.toString(); if (!grouped.has(key)) grouped.set(key, []); grouped.get(key).push(message._id.toString()); }
-    for (const [conversationId, messageIds] of grouped) { const conversation = await Conversation.findById(conversationId).select("participants"); if (conversation) io.to(conversation.participants[0].toString()).to(conversation.participants[1].toString()).emit("message:deleted", { conversationId, messageIds }); }
-  } catch (err) { console.error("[cleanup] auto-delete failed", err); }
-}, 1000);
+// Message retention is manual. Expired-message cleanup is not scheduled.
+
+
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: corsOrigin, methods: ["GET", "POST"] } });
 
-io.use((socket, next) => {
+const onlineUsers = new Set();
+
+async function notifyFriendsPresence(userId, online) {
+  try {
+    const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: userId }, { recipientId: userId }] }).select("senderId recipientId");
+    const friendIds = new Set(accepted.map(r => (r.senderId.toString() === userId ? r.recipientId : r.senderId).toString()));
+    for (const friendId of friendIds) io.to(friendId).emit("presence:changed", { userId: userId.toString(), online: Boolean(online) });
+  } catch (err) { console.error("[presence] broadcast failed", err); }
+}
+
+io.use(async (socket, next) => {
   const payload = verifyToken(socket.handshake.auth?.token);
   if (!payload) return next(new Error("Not authorized"));
-  socket.userId = payload.id;
-  return next();
+  try {
+    const user = await User.findById(payload.id).select("isDisabled");
+    if (!user || user.isDisabled) return next(new Error("Account unavailable"));
+    socket.userId = payload.id;
+    return next();
+  } catch (err) {
+    return next(new Error("Authentication could not be verified"));
+  }
 });
 
 io.on("connection", (socket) => {
   // One room per user id so every open client/device receives live messages.
   socket.join(socket.userId);
   publishUnreadCount(socket.userId).catch((err) => console.error("[socket] unread count failed", err));
+
+  (async () => {
+    const user = await User.findById(socket.userId).select("preferences");
+    const canSharePresence = normalizePreferences(user?.preferences).privacy.showOnline;
+    if (canSharePresence && !onlineUsers.has(socket.userId)) {
+      onlineUsers.add(socket.userId);
+      await notifyFriendsPresence(socket.userId, true);
+    }
+  })().catch(err => console.error("[presence] connection sync failed", err));
+
+  socket.on("presence:sync", async () => {
+    try {
+      const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: socket.userId }, { recipientId: socket.userId }] }).select("senderId recipientId");
+      const friendIds = accepted.map(r => (r.senderId.toString() === socket.userId ? r.recipientId : r.senderId).toString());
+      socket.emit("presence:initial", { onlineUserIds: friendIds.filter(id => onlineUsers.has(id)) });
+    } catch (err) { console.error("[presence] initial sync failed", err); }
+  });
+
+  socket.on("disconnect", async () => {
+    const room = io.sockets.adapter.rooms.get(socket.userId);
+    if (room && room.size > 0) return;
+    const wasOnline = onlineUsers.delete(socket.userId);
+    await User.updateOne({ _id: socket.userId }, { $set: { lastSeenAt: new Date() } }).catch(err => console.error("[presence] last seen update failed", err));
+    if (wasOnline) await notifyFriendsPresence(socket.userId, false);
+  });
 
   socket.on("message:send", async (payload, ack) => {
     const respond = typeof ack === "function" ? ack : () => {};
@@ -480,9 +583,36 @@ io.on("connection", (socket) => {
     }
   });
 
-  // A message is considered seen only when the recipient has the conversation open
-  // and the renderer explicitly confirms it. Seen messages are then deleted for
-  // both participants, keeping all devices consistent.
+  socket.on("message:delete", async (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    try {
+      const messageId = payload?.messageId;
+      const scope = String(payload?.scope || "");
+      if (!isValidId(messageId) || !["me", "everyone"].includes(scope)) return respond({ error: "Invalid delete request." });
+      const message = await Message.findById(messageId);
+      if (!message) return respond({ error: "Message no longer exists." });
+      const conversation = await Conversation.findById(message.conversationId);
+      if (!conversation || !conversation.participants.some(id => id.toString() === socket.userId)) return respond({ error: "Not a participant in this conversation." });
+      const participants = conversation.participants.map(id => id.toString());
+      if (scope === "everyone") {
+        if (message.senderId.toString() !== socket.userId) return respond({ error: "Only the sender can delete this message for everyone." });
+        await Message.deleteOne({ _id: message._id });
+        io.to(participants[0]).to(participants[1]).emit("message:deleted", { conversationId: message.conversationId.toString(), messageIds: [message._id.toString()] });
+        await Promise.all(participants.map(publishUnreadCount));
+      } else {
+        await Message.updateOne({ _id: message._id }, { $addToSet: { hiddenFor: socket.userId } });
+        io.to(socket.userId).emit("message:hidden", { conversationId: message.conversationId.toString(), messageIds: [message._id.toString()] });
+        await publishUnreadCount(socket.userId);
+      }
+      return respond({ ok: true });
+    } catch (err) {
+      console.error("[socket] message:delete failed", err);
+      return respond({ error: "Could not delete message." });
+    }
+  });
+
+  // The renderer only sends this event when the correct chat is open and visible.
+  // Reading updates unread state; it never deletes messages.
   socket.on("message:read", async (payload, ack) => {
     const respond = typeof ack === "function" ? ack : () => {};
     try {
@@ -500,18 +630,13 @@ io.on("connection", (socket) => {
       const readAt = new Date();
       await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId, readAt: null }, { $set: { readAt } });
 
-      // Send the read receipt before the deletion event; both are emitted in order.
-      io.to(participants[0]).to(participants[1]).emit("message:read", {
-        conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt
-      });
-      const deleteSeconds = Number(conversation.autoDeleteSeconds || 0);
-      if (deleteSeconds === -1) {
-        await Message.deleteMany({ _id: { $in: ids }, recipientId: socket.userId });
-        io.to(participants[0]).to(participants[1]).emit("message:deleted", { conversationId: conversationId.toString(), messageIds: idStrings });
-      } else if (deleteSeconds > 0) {
-        const deleteAt = new Date(Date.now() + deleteSeconds * 1000);
-        await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId }, { $set: { deleteAt } });
-        io.to(participants[0]).to(participants[1]).emit("message:read", { conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt, deleteAt });
+      // Read receipts are optional; message retention is always manual.
+      const reader = await User.findById(socket.userId).select("preferences");
+      const receiptsEnabled = normalizePreferences(reader?.preferences).privacy.readReceipts;
+      if (receiptsEnabled) {
+        io.to(participants[0]).to(participants[1]).emit("message:read", {
+          conversationId: conversationId.toString(), messageIds: idStrings, readerId: socket.userId, readAt
+        });
       }
       await publishUnreadCount(socket.userId);
       return respond({ ok: true, deletedIds: idStrings });

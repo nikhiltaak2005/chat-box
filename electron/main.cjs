@@ -5,6 +5,7 @@ const { autoUpdater } = require("electron-updater");
 let chatWindow;
 let petWindow;
 let unreadCount = 0;
+let petSettings = { avatar: "cat", size: 88, opacity: 100, alwaysOnTop: true, animate: true };
 let isQuitting = false;
 let updateState = { status: "idle", version: "", percent: 0, message: "Check for updates" };
 
@@ -61,9 +62,9 @@ function setUnreadCount(count) {
 function createPetWindow() {
   const area = screen.getPrimaryDisplay().workArea;
   petWindow = new BrowserWindow({
-    width: 104, height: 120,
-    x: area.x + area.width - 118, y: area.y + area.height - 138,
-    frame: false, transparent: true, alwaysOnTop: true, resizable: false,
+    width: petSettings.size + 16, height: petSettings.size + 32,
+    x: area.x + area.width - petSettings.size - 26, y: area.y + area.height - petSettings.size - 44,
+    frame: false, transparent: true, alwaysOnTop: petSettings.alwaysOnTop, resizable: false,
     movable: false, skipTaskbar: true, hasShadow: false, show: false,
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
@@ -113,20 +114,55 @@ ipcMain.on("window:toggle-top", (_event, enabled) => chatWindow?.setAlwaysOnTop(
 ipcMain.on("pet:move", (_event, x, y) => {
   if (!petWindow || !Number.isFinite(x) || !Number.isFinite(y)) return;
   const area = screen.getDisplayMatching(petWindow.getBounds()).workArea;
-  const nx = Math.max(area.x, Math.min(Math.round(x), area.x + area.width - 104));
-  const ny = Math.max(area.y, Math.min(Math.round(y), area.y + area.height - 120));
+  const width = petSettings.size + 16, height = petSettings.size + 32;
+  const nx = Math.max(area.x, Math.min(Math.round(x), area.x + area.width - width));
+  const ny = Math.max(area.y, Math.min(Math.round(y), area.y + area.height - height));
   petWindow.setPosition(nx, ny);
 });
+ipcMain.on("pet:settings", (_event, settings = {}) => {
+  const avatars = ["cat", "fox", "dog", "panda", "rabbit", "robot", "ghost", "frog"];
+  const size = Number(settings.size);
+  const opacity = Number(settings.opacity);
+  petSettings = {
+    avatar: avatars.includes(settings.avatar) ? settings.avatar : "cat",
+    size: Number.isFinite(size) ? Math.max(64, Math.min(144, Math.round(size / 8) * 8)) : 88,
+    opacity: Number.isFinite(opacity) ? Math.max(40, Math.min(100, opacity)) : 100,
+    alwaysOnTop: settings.alwaysOnTop !== false,
+    animate: settings.animate !== false
+  };
+  if (petWindow && !petWindow.isDestroyed()) {
+    const width = petSettings.size + 16, height = petSettings.size + 32;
+    const area = screen.getDisplayMatching(petWindow.getBounds()).workArea;
+    const bounds = petWindow.getBounds();
+    const x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - width));
+    const y = Math.max(area.y, Math.min(bounds.y, area.y + area.height - height));
+    petWindow.setBounds({ x, y, width, height });
+    petWindow.setOpacity(petSettings.opacity / 100);
+    petWindow.setAlwaysOnTop(petSettings.alwaysOnTop);
+    petWindow.webContents.send("pet:settings", petSettings);
+  }
+});
+ipcMain.on("app:set-launch-at-startup", (_event, enabled) => {
+  if (!app.isPackaged) return;
+  app.setLoginItemSettings({ openAtLogin: Boolean(enabled) });
+});
 ipcMain.on("pet:open-chat", showChat);
-ipcMain.on("notification:incoming", (_event, body) => {
+ipcMain.on("notification:incoming", (_event, body, options = {}) => {
   // The badge is driven by the server's unread:count event, never incremented locally.
   if (chatWindow && chatWindow.isVisible()) return;
   if (Notification.isSupported()) {
-    new Notification({ title: "PocketChat", body: typeof body === "string" && body ? body.slice(0, 180) : "You received a new message." }).show();
+    new Notification({
+      title: "PocketChat",
+      body: typeof body === "string" && body ? body.slice(0, 180) : "You received a new message.",
+      silent: options?.sound === false
+    }).show();
   }
 });
 ipcMain.on("unread:set-count", (_event, count) => setUnreadCount(count));
-ipcMain.on("pet:ready", () => petWindow?.webContents.send("pet:unread-count", unreadCount));
+ipcMain.on("pet:ready", () => {
+  petWindow?.webContents.send("pet:unread-count", unreadCount);
+  petWindow?.webContents.send("pet:settings", petSettings);
+});
 ipcMain.handle("app:platform", () => process.platform);
 
 
