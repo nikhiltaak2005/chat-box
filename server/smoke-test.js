@@ -80,8 +80,22 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   console.log("PASS GET /api/conversations/:id ->", conv.conversation._id, "(messages:", conv.messages.length + ")");
 
   const aliceSocket = await connect(alice.token);
+  const bobPresence = waitForEvent(aliceSocket, "presence:changed", p => p.userId === bob.user.id && p.online);
   const bobSocket = await connect(bob.token);
-  console.log("PASS sockets connected");
+  await bobPresence;
+  console.log("PASS sockets connected and friend presence syncs");
+
+  await req("/api/preferences", { method: "PATCH", token: alice.token, body: { privacy: { profileVisibility: "nobody" } } });
+  const privateDirectory = await req("/api/users", { token: bob.token });
+  const privateAlice = privateDirectory.users.find(u => u._id === alice.user.id);
+  if (!privateAlice || privateAlice.displayName || privateAlice.avatarData) throw new Error("profile visibility setting was not enforced");
+  await req("/api/preferences", { method: "PATCH", token: alice.token, body: { privacy: { profileVisibility: "contacts" } } });
+  console.log("PASS profile visibility is enforced by the API");
+
+  const presenceOff = waitForEvent(aliceSocket, "presence:changed", p => p.userId === bob.user.id && !p.online);
+  await req("/api/preferences", { method: "PATCH", token: bob.token, body: { privacy: { showOnline: false } } });
+  await presenceOff;
+  console.log("PASS online status privacy toggle");
 
   const incomingMessage = waitForEvent(bobSocket, "message:new", m => m.body === "hello from smoke test");
   const ack = await new Promise((resolve) =>
