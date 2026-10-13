@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import EmojiPicker from "emoji-picker-react";
 import SettingsCenter, { DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2 } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2 } from "lucide-react";
 
 const DEFAULT_SERVER = "http://localhost:4000";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -165,8 +165,10 @@ export default function App() {
       const ids = new Set(payload.messageIds || []);
       setMessages(prev => prev.map(message => ids.has(message._id) ? { ...message, readAt: payload.readAt } : message));
     });
-    socket.on("conversation:settings", payload => {
-      if (payload?.conversationId === activeRef.current?.conversationId) setAutoDeleteSeconds(Number(payload.autoDeleteSeconds || 0));
+    socket.on("message:hidden", payload => {
+      if (payload?.conversationId !== activeRef.current?.conversationId) return;
+      const ids = new Set(payload.messageIds || []);
+      setMessages(prev => prev.filter(message => !ids.has(message._id)));
     });
     socket.on("message:deleted", payload => {
       if (payload?.conversationId !== activeRef.current?.conversationId) return;
@@ -268,7 +270,6 @@ export default function App() {
     try {
       const data = await request(`/api/conversations/${person._id}`, token);
       readRequestRef.current = "";
-      setAutoDeleteSeconds(Number(data.conversation.autoDeleteSeconds || 0));
       setActive({ ...person, conversationId: data.conversation._id });
       setMessages(data.messages || []); setReplyTo(null);
     } catch (e) { setError(e.message); }
@@ -292,13 +293,12 @@ export default function App() {
     } finally { setUpdateBusy(false); }
   }
 
-  async function saveChatSettings(e) {
-    e.preventDefault(); if (!active) return;
-    setSettingsSaving(true); setError("");
-    try {
-      const data = await request(`/api/conversations/${active.conversationId}/settings`, token, { method: "PATCH", body: JSON.stringify({ autoDeleteSeconds }) });
-      setAutoDeleteSeconds(Number(data.autoDeleteSeconds || 0)); setSettingsOpen(false);
-    } catch (e) { setError(e.message); } finally { setSettingsSaving(false); }
+  async function deleteMessage(message, scope) {
+    if (!message?._id) return;
+    if (scope === "everyone" && !window.confirm("Delete this message for everyone? This cannot be undone.")) return;
+    socketRef.current?.emit("message:delete", { messageId: message._id, scope }, result => {
+      if (result?.error) setError(result.error);
+    });
   }
 
   async function sendMessage(e) {
@@ -344,12 +344,12 @@ export default function App() {
           <button className="icon-btn back" onClick={()=>setActive(null)}><ArrowLeft size={17}/></button>
           <div className="avatar">{active.avatarData ? <img src={active.avatarData} alt=""/> : (active.displayName || active.username).slice(0,1).toUpperCase()}</div>
           <div className="contact-meta"><strong>{active.displayName || active.username}</strong><small>@{active.username}</small></div>
-          <button className="icon-btn" title="Disappearing messages settings" onClick={()=>setSettingsOpen(true)}><Settings size={15}/></button>
+          <button className="icon-btn" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={15}/></button>
           <div className="online-dot" title={status}/>
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button></div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.body}</div><div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body)}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
@@ -372,7 +372,6 @@ export default function App() {
     {adminOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAdminOpen(false);}}><section className="profile-dialog admin-dialog"><div className="profile-heading"><div><p className="eyebrow">OWNER CONTROLS</p><h2>User management</h2></div><button type="button" className="icon-btn" onClick={()=>setAdminOpen(false)}><X size={17}/></button></div><p className="muted">Disable an account to block access, or permanently delete its account, messages, conversations and friend requests.</p><div className="admin-user-list">{adminUsers.map(u=><div className="admin-user" key={u.id}><div className="contact-meta"><strong>{u.displayName||u.username} {u.role==="admin"?"· ADMIN":""}</strong><small>@{u.username} · {u.isDisabled?"Disabled":"Active"}</small></div>{u.role!=="admin" && <><button className="icon-btn" title={u.isDisabled?"Enable":"Disable"} onClick={()=>adminDisableUser(u.id,u.isDisabled)}>{u.isDisabled?"✓":"⏸"}</button><button className="icon-btn" title="Delete user and chats" onClick={()=>adminDeleteUser(u.id,u.username)}>🗑</button></>}</div>)}</div><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>request("/api/admin/storage/expired",token,{method:"DELETE"}).then(d=>setError("Expired messages cleaned: "+d.deletedMessages)).catch(e=>setError(e.message))}>Clean expired messages</button><button type="button" className="primary-btn" onClick={()=>setAdminOpen(false)}>Done</button></div></section></div>}
     {updateOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setUpdateOpen(false);}}><section className="profile-dialog"><div className="profile-heading"><div><p className="eyebrow">POCKETCHAT</p><h2>Software updates</h2></div><button type="button" className="icon-btn" onClick={()=>setUpdateOpen(false)}><X size={17}/></button></div><div className="update-status-icon">{updateInfo.status==="current" ? <CheckCircle2 size={28}/> : updateInfo.status==="downloaded" ? <CheckCircle2 size={28}/> : <Download size={28}/>}</div><strong className="update-status-title">{updateInfo.message || "Check for updates"}</strong>{updateInfo.version && <p className="muted">Version {updateInfo.version}</p>}{updateInfo.status==="downloading" && <div className="update-progress"><span style={{width:`${updateInfo.percent || 0}%`}}/></div>}{updateInfo.status==="error" && <p className="error-text">Please check your internet connection and try again.</p>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setUpdateOpen(false)}>Close</button><button type="button" className="primary-btn" disabled={updateBusy || ["checking","downloading","current","dev"].includes(updateInfo.status)} onClick={runUpdateAction}>{updateBusy ? "Please wait…" : updateInfo.status==="downloaded" ? "Install and restart" : updateInfo.status==="available" ? "Download update" : updateInfo.status==="downloading" ? "Downloading…" : updateInfo.status==="current" ? "Up to date" : updateInfo.status==="dev" ? "Installed app only" : "Check for updates"}</button></div>{updateInfo.status==="current" && <button type="button" className="text-btn" onClick={runUpdateAction}>Check again</button>}{updateInfo.status==="dev" && <p className="muted">The update service works in the installed app, not in the development window.</p>}</section></div>}
     {settingsCenterOpen && <SettingsCenter value={preferences} onSave={savePreferences} onClose={()=>setSettingsCenterOpen(false)} />}
-    {settingsOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSettingsOpen(false);}}><form className="profile-dialog" onSubmit={saveChatSettings}><div className="profile-heading"><div><p className="eyebrow">SNAPCHAT-STYLE</p><h2>Disappearing messages</h2></div><button type="button" className="icon-btn" onClick={()=>setSettingsOpen(false)}><X size={17}/></button></div><label>Delete messages<select className="setting-select" value={autoDeleteSeconds} onChange={e=>setAutoDeleteSeconds(Number(e.target.value))}><option value={0}>Off — keep messages</option><option value={-1}>Immediately after seen</option><option value={5}>5 seconds after seen</option><option value={60}>1 minute after seen</option><option value={3600}>1 hour after seen</option><option value={86400}>24 hours after seen</option></select></label><p className="muted">The timer starts only after the recipient opens this conversation and the message is marked seen. If their chat is minimized or hidden, it stays unread. This setting applies to this conversation on both sides.</p><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setSettingsOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={settingsSaving}>{settingsSaving ? "Saving…" : "Save settings"}</button></div></form></div>}
     {profileOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setProfileOpen(false);}}><form className="profile-dialog" onSubmit={saveProfile}><div className="profile-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2>Edit profile</h2></div><button type="button" className="icon-btn" onClick={()=>setProfileOpen(false)}><X size={17}/></button></div><label className="avatar-picker">{profileAvatar ? <img src={profileAvatar} alt="Profile preview"/> : <UserRound size={30}/>}<span><Camera size={13}/> Change photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleAvatarFile}/></span></label><label>Display name<input value={profileName} onChange={e=>setProfileName(e.target.value)} placeholder="Your name" maxLength={40}/></label><label>Username<input value={profileUsername} onChange={e=>setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="username" minLength={3} maxLength={24} required/><small>3–24 letters, numbers or underscore</small></label>{error && <div className="error-text">{error}</div>}<div className="profile-actions"><button type="button" className="text-btn" onClick={()=>setProfileOpen(false)}>Cancel</button><button className="primary-btn" type="submit" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button></div></form></div>}
   </div>;
 }
