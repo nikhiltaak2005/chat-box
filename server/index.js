@@ -80,6 +80,7 @@ const messageSchema = new Schema(
     replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
     readAt: { type: Date, default: null, index: true },
     deleteAt: { type: Date, default: null, index: true },
+    expireAfterSeconds: { type: Number, default: 0, min: 0, max: 86400 },
     hiddenFor: { type: [Schema.Types.ObjectId], default: [] }
   },
   { timestamps: true }
@@ -114,7 +115,7 @@ function verifyToken(token) {
 const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00", mutedContacts: [] },
-  chat: { enterToSend: true, reactions: true, mediaEnabled: true },
+  chat: { enterToSend: true, reactions: true, mediaEnabled: true, disappearingMode: "off" },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
 };
 
@@ -145,6 +146,7 @@ function normalizePreferences(input = {}, base = DEFAULT_PREFERENCES) {
   const chat = source.chat || {};
   for (const key of ["enterToSend", "reactions", "mediaEnabled"]) {
     if (typeof chat[key] === "boolean") result.chat[key] = chat[key];
+  if (["off", "afterSeen", "5m", "1h", "24h"].includes(chat.disappearingMode)) result.chat.disappearingMode = chat.disappearingMode;
   }
   const privacy = source.privacy || {};
   for (const key of ["readReceipts", "showOnline"]) {
@@ -545,7 +547,8 @@ app.get("/api/conversations/:personId", requireAuth, async (req, res, next) => {
     const conversation = await findOrCreateConversation(req.userId, personId);
     if (!conversation) return res.status(500).json({ error: "Could not open conversation." });
 
-    const messages = await Message.find({ conversationId: conversation._id, hiddenFor: { $ne: req.userId } })
+    await Message.deleteMany({ conversationId: conversation._id, deleteAt: { $ne: null, $lte: new Date() } });
+    const messages = await Message.find({ conversationId: conversation._id, hiddenFor: { $ne: req.userId }, $or: [{ deleteAt: null }, { deleteAt: { $gt: new Date() } }] })
       .sort({ createdAt: 1 })
       .limit(500);
     const hidePeerReadReceipts = !normalizePreferences(person.preferences).privacy.readReceipts;
@@ -573,7 +576,7 @@ app.use((err, _req, res, _next) => {
 // ---------------------------------------------------------------------------
 // HTTP + Socket.IO
 // ---------------------------------------------------------------------------
-// Message retention is manual. Expired-message cleanup is not scheduled.
+// Expired disappearing messages are purged server-side and removed on both devices.
 
 
 
@@ -671,8 +674,12 @@ io.on("connection", (socket) => {
         if (!original) return respond({ error: "The message you are replying to no longer exists." });
         replyTo = original._id;
       }
+      const sender = await User.findById(socket.userId).select("preferences");
+      const disappearingMode = normalizePreferences(sender?.preferences).chat.disappearingMode || "off";
+      const expirySeconds = ({ afterSeen: 5, "5m": 300, "1h": 3600, "24h": 86400 })[disappearingMode] || 0;
       const message = await Message.create({
         conversationId: conversation._id,
+        expireAfterSeconds: expirySeconds,
         senderId: socket.userId,
         recipientId,
         body,
@@ -762,12 +769,12 @@ io.on("connection", (socket) => {
       const participants = conversation.participants.map((id) => id.toString());
       if (!participants.includes(socket.userId)) return respond({ error: "Not a participant in this conversation." });
 
-      const unread = await Message.find({ conversationId, recipientId: socket.userId, readAt: null }).select("_id senderId");
+      const unread = await Message.find({ conversationId, recipientId: socket.userId, readAt: null }).select("_id senderId expireAfterSeconds");
       if (unread.length === 0) return respond({ ok: true, deletedIds: [] });
       const ids = unread.map((m) => m._id);
       const idStrings = ids.map((id) => id.toString());
       const readAt = new Date();
-      await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId, readAt: null }, { $set: { readAt } });
+      await Message.updateMany({ _id: { $in: ids }, recipientId: socket.userId, readAt: null }, [{ $set: { readAt, deleteAt: { $cond: [{ $gt: ["$expireAfterSeconds", 0] }, { $dateAdd: { startDate: readAt, unit: "second", amount: "$expireAfterSeconds" } }, "$deleteAt"] } } }]);
 
       // Read receipts are optional; message retention is always manual.
       const reader = await User.findById(socket.userId).select("preferences");
