@@ -47,6 +47,7 @@ const userSchema = new Schema(
     username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 24 },
     displayName: { type: String, trim: true, maxlength: 40, default: "" },
     avatarData: { type: String, default: "", maxlength: 1500000 },
+    lastSeenAt: { type: Date, default: null },
     preferences: { type: Schema.Types.Mixed, default: {} },
     passwordHash: { type: String, required: true }
   },
@@ -141,8 +142,17 @@ function publicSelf(user) {
 }
 
 // Shape returned by /api/users (client reads contact._id).
-function publicContact(user) {
-  return { _id: user._id.toString(), username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "" };
+function publicContact(user, { isFriend = false } = {}) {
+  const privacy = normalizePreferences(user.preferences).privacy;
+  const showDetails = privacy.profileVisibility === "everyone" || (privacy.profileVisibility === "contacts" && isFriend);
+  const canSeeLastSeen = privacy.lastSeen === "everyone" || (privacy.lastSeen === "contacts" && isFriend);
+  return {
+    _id: user._id.toString(),
+    username: user.username,
+    displayName: showDetails ? (user.displayName || "") : "",
+    avatarData: showDetails ? (user.avatarData || "") : "",
+    lastSeenAt: canSeeLastSeen ? (user.lastSeenAt || null) : null
+  };
 }
 
 function conversationKey(a, b) {
@@ -300,9 +310,20 @@ app.patch("/api/preferences", requireAuth, async (req, res, next) => {
   try {
     const user = await User.findById(req.userId).select("preferences");
     if (!user) return res.status(404).json({ error: "User not found." });
-    const preferences = normalizePreferences(req.body, normalizePreferences(user.preferences));
+    const previous = normalizePreferences(user.preferences);
+    const preferences = normalizePreferences(req.body, previous);
     user.preferences = preferences;
     await user.save();
+    if (previous.privacy.showOnline !== preferences.privacy.showOnline) {
+      const hasConnectedSocket = Boolean(io.sockets.adapter.rooms.get(req.userId)?.size);
+      if (preferences.privacy.showOnline && hasConnectedSocket) {
+        onlineUsers.add(req.userId);
+        await notifyFriendsPresence(req.userId, true);
+      } else {
+        onlineUsers.delete(req.userId);
+        await notifyFriendsPresence(req.userId, false);
+      }
+    }
     return res.json({ preferences });
   } catch (err) { return next(err); }
 });
@@ -328,7 +349,7 @@ app.get("/api/friends", requireAuth, async (req, res, next) => {
   try {
     const requests = await FriendRequest.find({ $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).sort({ createdAt: -1 }).limit(200);
     const ids = [...new Set(requests.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()))];
-    const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData");
+    const users = await User.find({ _id: { $in: ids }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt");
     const map = new Map(users.map(u => [u._id.toString(), publicContact(u)]));
     return res.json({ requests: requests.map(r => ({ id: r._id.toString(), senderId: r.senderId.toString(), recipientId: r.recipientId.toString(), status: r.status, createdAt: r.createdAt, person: map.get((r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()) })).filter(r => r.person) });
   } catch (err) { return next(err); }
@@ -401,8 +422,8 @@ app.get("/api/users", requireAuth, async (req, res, next) => {
     // the UI uses isFriend to offer a friend request for everyone else.
     const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).select("senderId recipientId");
     const acceptedIds = new Set(accepted.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()));
-    const users = await User.find({ _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData").sort({ username: 1 }).limit(1000);
-    return res.json({ users: users.map(user => ({ ...publicContact(user), isFriend: acceptedIds.has(user._id.toString()) })) });
+    const users = await User.find({ _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt").sort({ username: 1 }).limit(1000);
+    return res.json({ users: users.map(user => ({ ...publicContact(user, { isFriend: acceptedIds.has(user._id.toString()) }), isFriend: acceptedIds.has(user._id.toString()) })) });
   } catch (err) {
     return next(err);
   }
@@ -457,6 +478,16 @@ app.use((err, _req, res, _next) => {
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: corsOrigin, methods: ["GET", "POST"] } });
 
+const onlineUsers = new Set();
+
+async function notifyFriendsPresence(userId, online) {
+  try {
+    const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: userId }, { recipientId: userId }] }).select("senderId recipientId");
+    const friendIds = new Set(accepted.map(r => (r.senderId.toString() === userId ? r.recipientId : r.senderId).toString()));
+    for (const friendId of friendIds) io.to(friendId).emit("presence:changed", { userId: userId.toString(), online: Boolean(online) });
+  } catch (err) { console.error("[presence] broadcast failed", err); }
+}
+
 io.use((socket, next) => {
   const payload = verifyToken(socket.handshake.auth?.token);
   if (!payload) return next(new Error("Not authorized"));
@@ -468,6 +499,31 @@ io.on("connection", (socket) => {
   // One room per user id so every open client/device receives live messages.
   socket.join(socket.userId);
   publishUnreadCount(socket.userId).catch((err) => console.error("[socket] unread count failed", err));
+
+  (async () => {
+    const user = await User.findById(socket.userId).select("preferences");
+    const canSharePresence = normalizePreferences(user?.preferences).privacy.showOnline;
+    if (canSharePresence && !onlineUsers.has(socket.userId)) {
+      onlineUsers.add(socket.userId);
+      await notifyFriendsPresence(socket.userId, true);
+    }
+  })().catch(err => console.error("[presence] connection sync failed", err));
+
+  socket.on("presence:sync", async () => {
+    try {
+      const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: socket.userId }, { recipientId: socket.userId }] }).select("senderId recipientId");
+      const friendIds = accepted.map(r => (r.senderId.toString() === socket.userId ? r.recipientId : r.senderId).toString());
+      socket.emit("presence:initial", { onlineUserIds: friendIds.filter(id => onlineUsers.has(id)) });
+    } catch (err) { console.error("[presence] initial sync failed", err); }
+  });
+
+  socket.on("disconnect", async () => {
+    const room = io.sockets.adapter.rooms.get(socket.userId);
+    if (room && room.size > 0) return;
+    const wasOnline = onlineUsers.delete(socket.userId);
+    await User.updateOne({ _id: socket.userId }, { $set: { lastSeenAt: new Date() } }).catch(err => console.error("[presence] last seen update failed", err));
+    if (wasOnline) await notifyFriendsPresence(socket.userId, false);
+  });
 
   socket.on("message:send", async (payload, ack) => {
     const respond = typeof ack === "function" ? ack : () => {};
