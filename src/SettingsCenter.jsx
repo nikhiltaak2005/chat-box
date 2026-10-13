@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Bell, Palette, ShieldCheck, X, RotateCcw, Save } from "lucide-react";
 
+export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false };
+
 export const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00" },
@@ -19,21 +21,23 @@ function Field({ label, description, children }) {
   return <label className="settings-field"><span className="settings-field-label">{label}</span>{description && <small>{description}</small>}{children}</label>;
 }
 
-export default function SettingsCenter({ value, onSave, onClose, saving = false }) {
+export default function SettingsCenter({ value, devicePreferences, onSave, onClose, saving = false }) {
   const [tab, setTab] = useState("appearance");
   const [draft, setDraft] = useState(() => mergePreferences(value));
+  const [deviceDraft, setDeviceDraft] = useState(() => ({ ...DEFAULT_DEVICE_PREFERENCES, ...(devicePreferences || {}), pet: { ...DEFAULT_DEVICE_PREFERENCES.pet, ...(devicePreferences?.pet || {}) } }));
   const [notice, setNotice] = useState("");
   const patch = (section, key, next) => setDraft(prev => ({ ...prev, [section]: { ...prev[section], [key]: next } }));
   const reset = () => { setDraft(mergePreferences(DEFAULT_PREFERENCES)); setNotice("Defaults restored. Save to apply them."); };
   const save = async () => {
     setNotice("");
-    try { await onSave(draft); setNotice("Settings saved."); }
+    try { await onSave(draft, deviceDraft); setNotice("Settings saved."); }
     catch (error) { setNotice(error?.message || "Could not save settings."); }
   };
   const tabs = [
     { id: "appearance", label: "Appearance", icon: Palette },
     { id: "notifications", label: "Notifications", icon: Bell },
-    { id: "privacy", label: "Privacy", icon: ShieldCheck }
+    { id: "privacy", label: "Privacy", icon: ShieldCheck },
+    { id: "pet", label: "Pet & Desktop", icon: Bell }
   ];
   const appearance = draft.appearance;
   const notifications = draft.notifications;
@@ -59,6 +63,14 @@ export default function SettingsCenter({ value, onSave, onClose, saving = false 
             <label className="settings-toggle"><span><strong>Message reactions</strong><small>Notify me when someone reacts.</small></span><input type="checkbox" checked={notifications.reactions} onChange={e=>patch("notifications","reactions",e.target.checked)}/></label>
             <label className="settings-toggle"><span><strong>Quiet hours</strong><small>Mute notifications during a daily time window.</small></span><input type="checkbox" checked={notifications.quietHoursEnabled} onChange={e=>patch("notifications","quietHoursEnabled",e.target.checked)}/></label>
             {notifications.quietHoursEnabled && <div className="settings-time-row"><Field label="From"><input className="setting-input" type="time" value={notifications.quietStart} onChange={e=>patch("notifications","quietStart",e.target.value)}/></Field><Field label="Until"><input className="setting-input" type="time" value={notifications.quietEnd} onChange={e=>patch("notifications","quietEnd",e.target.value)}/></Field></div>}
+          </div>}
+          {tab === "pet" && <div className="settings-section"><h3>Pet & Desktop</h3><p className="muted">These settings stay on this PC and are not synced to your account.</p>
+            <Field label="Pet mascot"><select className="setting-select" value={deviceDraft.pet.avatar} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,avatar:e.target.value}}))}><option value="cat">🐱 Orange cat</option><option value="fox">🦊 Fox</option><option value="dog">🐶 Dog</option><option value="panda">🐼 Panda</option><option value="rabbit">🐰 Rabbit</option><option value="robot">🤖 Robot</option><option value="ghost">👻 Ghost</option><option value="frog">🐸 Frog</option></select></Field>
+            <Field label={"Pet size · " + deviceDraft.pet.size + " px"}><input className="settings-range" type="range" min="64" max="144" step="8" value={deviceDraft.pet.size} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,size:Number(e.target.value)}}))}/></Field>
+            <Field label={"Opacity · " + deviceDraft.pet.opacity + "%"}><input className="settings-range" type="range" min="40" max="100" step="5" value={deviceDraft.pet.opacity} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,opacity:Number(e.target.value)}}))}/></Field>
+            <label className="settings-toggle"><span><strong>Always on top</strong><small>Keep the floating pet above other windows.</small></span><input type="checkbox" checked={deviceDraft.pet.alwaysOnTop} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,alwaysOnTop:e.target.checked}}))}/></label>
+            <label className="settings-toggle"><span><strong>Pet animation</strong><small>Enable hover movement and playful feedback.</small></span><input type="checkbox" checked={deviceDraft.pet.animate} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,animate:e.target.checked}}))}/></label>
+            <label className="settings-toggle"><span><strong>Start with Windows</strong><small>Launch PocketChat when you sign in to Windows.</small></span><input type="checkbox" checked={deviceDraft.launchAtStartup} onChange={e=>setDeviceDraft(prev=>({...prev,launchAtStartup:e.target.checked}))}/></label>
           </div>}
           {tab === "privacy" && <div className="settings-section"><h3>Privacy</h3><p className="muted">These choices will be enforced by the service wherever the feature is supported.</p>
             <label className="settings-toggle"><span><strong>Read receipts</strong><small>Let people know when you have read their messages.</small></span><input type="checkbox" checked={privacy.readReceipts} onChange={e=>patch("privacy","readReceipts",e.target.checked)}/></label>
