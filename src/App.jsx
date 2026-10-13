@@ -32,6 +32,7 @@ export default function App() {
   const [contacts, setContacts] = useState([]);
   const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
+  const friendRequestsRef = useRef(friendRequests);
   const [friendUsername, setFriendUsername] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
@@ -69,6 +70,7 @@ export default function App() {
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { visibleRef.current = chatVisible; }, [chatVisible]);
   useEffect(() => { preferencesRef.current = preferences; }, [preferences]);
+  useEffect(() => { friendRequestsRef.current = friendRequests; }, [friendRequests]);
   useEffect(() => {
     localStorage.setItem("pm_device_preferences", JSON.stringify(devicePreferences));
     window.desktop?.setPetSettings?.(devicePreferences.pet);
@@ -116,7 +118,14 @@ export default function App() {
           request("/api/friends", token)
         ]);
         setContacts(people.users || []);
-        setFriendRequests(friends.requests || []);
+        const nextRequests = friends.requests || [];
+        const existingIds = new Set(friendRequestsRef.current.map(request => request.id));
+        const newIncoming = nextRequests.filter(request => request.status === "pending" && request.recipientId === me.id && !existingIds.has(request.id));
+        if (newIncoming.length && !visibleRef.current && preferencesRef.current.notifications.enabled && preferencesRef.current.notifications.friendRequests && !isQuietNow(preferencesRef.current.notifications)) {
+          const personName = newIncoming[0].person?.username || "someone";
+          window.desktop?.notifyIncoming("New friend request from @" + personName, { sound: preferencesRef.current.notifications.sound });
+        }
+        setFriendRequests(nextRequests);
       } catch (e) {
         setError(e.message);
       }
@@ -166,7 +175,7 @@ export default function App() {
       if (msg.senderId !== me.id) {
         // Notifications never mark a message as read. Preferences are account-synced.
         if ((!visibleRef.current || !isCurrentConversation) && preferencesRef.current.notifications.enabled && !isQuietNow(preferencesRef.current.notifications)) {
-          const preview = preferencesRef.current.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferencesRef.current.notifications.preview === "sender" ? ("New message from " + (activeRef.current?.username || "a contact")) : "You received a new message.";
+          const preview = preferencesRef.current.notifications.preview === "full" ? (msg.body || "You received a new message.") : preferencesRef.current.notifications.preview === "sender" ? "New message from a contact" : "You received a new message.";
           window.desktop?.notifyIncoming(preview, { sound: preferencesRef.current.notifications.sound });
         }
       }
@@ -186,7 +195,7 @@ export default function App() {
         setMessages(prev => prev.map(message => message._id === payload.messageId ? { ...message, reactions: payload.reactions || [] } : message));
       }
       const prefs = preferencesRef.current;
-      if (payload?.messageSenderId === me.id && payload.actorId !== me.id && prefs.notifications.enabled && prefs.notifications.reactions && !visibleRef.current && !isQuietNow(prefs.notifications)) {
+      if (payload?.messageSenderId === me.id && payload.actorId !== me.id && prefs.notifications.enabled && prefs.notifications.reactions && (!visibleRef.current || payload.conversationId !== activeRef.current?.conversationId) && !isQuietNow(prefs.notifications)) {
         window.desktop?.notifyIncoming("Someone reacted to your message.", { sound: prefs.notifications.sound });
       }
     });
