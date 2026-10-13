@@ -6,7 +6,7 @@ export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", customAvatarDa
 export const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
   notifications: { enabled: true, sound: true, preview: "full", friendRequests: true, reactions: false, quietHoursEnabled: false, quietStart: "22:00", quietEnd: "08:00", mutedContacts: [] },
-  chat: { enterToSend: true, reactions: true, mediaEnabled: true },
+  chat: { enterToSend: true, reactions: true, mediaEnabled: true, disappearingMode: "off" },
   privacy: { readReceipts: true, showOnline: true, lastSeen: "contacts", profileVisibility: "contacts" }
 };
 
@@ -172,6 +172,7 @@ export default function SettingsCenter({ value, devicePreferences, user, onSave,
             <label className="settings-toggle"><span><strong>Enter to send</strong><small>When off, Enter inserts a new line and Ctrl+Enter sends.</small></span><input type="checkbox" checked={chat.enterToSend} onChange={e=>patch("chat","enterToSend",e.target.checked)}/></label>
             <label className="settings-toggle"><span><strong>Message reactions</strong><small>Show quick reactions on messages.</small></span><input type="checkbox" checked={chat.reactions} onChange={e=>patch("chat","reactions",e.target.checked)}/></label>
             <label className="settings-toggle"><span><strong>GIFs & stickers</strong><small>Allow browsing and sending media from GIPHY.</small></span><input type="checkbox" checked={chat.mediaEnabled} onChange={e=>patch("chat","mediaEnabled",e.target.checked)}/></label>
+            <Field label="Disappearing messages" description="Timer starts when the recipient opens the message. After viewing keeps it briefly so the opened status can sync."><select className="setting-select" value={chat.disappearingMode || "off"} onChange={e=>patch("chat","disappearingMode",e.target.value)}><option value="off">Off · Keep messages</option><option value="afterSeen">After viewed · 5 seconds</option><option value="5m">5 minutes after viewed</option><option value="1h">1 hour after viewed</option><option value="24h">24 hours after viewed</option></select></Field>
             <div className="settings-note">GIF and sticker search uses GIPHY. Search terms are sent to GIPHY through the PocketChat backend; media requires a configured GIPHY API key.</div>
           </div>}
           {tab === "privacy" && <div className="settings-section"><h3>Privacy</h3><p className="muted">These choices control read receipts, presence visibility and the profile details other users can see.</p>
