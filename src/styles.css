@@ -150,3 +150,5 @@
 .app-shell.theme-light .giphy-attribution strong{color:#20212a}
 .app-shell.theme-light .reaction-chip,.app-shell.theme-light .quick-reaction{color:#20212a;background:#ececf2;border-color:#d7d8df}
 @media(max-width:480px){.media-dialog{max-height:94vh}.media-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.media-item img{height:82px}.media-search{padding:10px}.media-search .primary-btn{min-width:55px;padding:9px 8px}}
+
+.app-shell .messages{background:var(--chat-wallpaper,#111318)}
