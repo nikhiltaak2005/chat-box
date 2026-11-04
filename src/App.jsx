@@ -5,7 +5,7 @@ import MediaPicker from "./MediaPicker.jsx";
 import SettingsCenter, { DEFAULT_DEVICE_PREFERENCES, DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
 import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon, LockKeyhole, Bell, BellOff } from "lucide-react";
 
-const DEFAULT_SERVER = "http://localhost:4000";
+const DEFAULT_SERVER = import.meta.env.DEV ? "http://localhost:4000" : "https://chat-box-ryz8.onrender.com";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
 const tokenKey = "pm_token";
 const userKey = "pm_user";
