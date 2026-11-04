@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (for example 0.2.3)"
+        description: "Release version (for example 0.2.6)"
         required: true
-        default: "0.2.3"
+        default: "0.2.6"
         type: string
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
         run: npm install
       - name: Build Windows installer and updater metadata
         env:
-          VITE_API_URL: https://personal-messenger-api.onrender.com
+          VITE_API_URL: https://chat-box-ryz8.onrender.com
         run: npm run package:win -- --config.win.signAndEditExecutable=false --publish never
       - name: Verify updater metadata matches installer
         shell: pwsh
