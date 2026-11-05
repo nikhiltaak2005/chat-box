@@ -481,6 +481,108 @@ app.delete("/api/friends/:requestId", requireAuth, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+
+function groupMemberIds(group) { return (group.members || []).map(member => member.userId.toString()); }
+function isGroupMember(group, userId) { return groupMemberIds(group).includes(userId.toString()); }
+function isGroupAdmin(group, userId) { return (group.admins || []).some(id => id.toString() === userId.toString()); }
+async function serializeGroup(group, currentUserId) {
+  const ids = groupMemberIds(group);
+  const users = await User.find({ _id: { $in: ids } }).select("username displayName avatarData");
+  const userMap = new Map(users.map(user => [user._id.toString(), user]));
+  const members = ids.map(id => { const user = userMap.get(id); return user ? { id, username: user.username, displayName: user.displayName || "", avatarData: user.avatarData || "", isAdmin: isGroupAdmin(group, id) } : null; }).filter(Boolean);
+  const latest = await GroupMessage.findOne({ groupId: group._id }).sort({ createdAt: -1 }).select("body senderId createdAt contentType");
+  return { id: group._id.toString(), name: group.name, description: group.description || "", avatarData: group.avatarData || "", createdBy: group.createdBy.toString(), members, memberCount: members.length, isAdmin: isGroupAdmin(group, currentUserId), lastMessage: latest ? { body: latest.body || (latest.contentType === "gif" ? "GIF" : "Sticker"), senderId: latest.senderId.toString(), createdAt: latest.createdAt } : null, updatedAt: group.updatedAt };
+}
+async function areAcceptedFriends(userId, otherIds) {
+  const ids = otherIds.filter(id => id.toString() !== userId.toString());
+  if (!ids.length) return true;
+  const requests = await FriendRequest.find({ status: "accepted", $or: [{ senderId: userId, recipientId: { $in: ids } }, { recipientId: userId, senderId: { $in: ids } }] }).select("senderId recipientId");
+  return new Set(requests.map(request => (request.senderId.toString() === userId.toString() ? request.recipientId : request.senderId).toString())).size === new Set(ids.map(id => id.toString())).size;
+}
+
+app.get("/api/groups", requireAuth, async (req, res, next) => {
+  try { const groups = await Group.find({ "members.userId": req.userId }).sort({ updatedAt: -1 }).limit(100); return res.json({ groups: await Promise.all(groups.map(group => serializeGroup(group, req.userId))) }); }
+  catch (err) { return next(err); }
+});
+app.post("/api/groups", requireAuth, async (req, res, next) => {
+  try {
+    const name = String(req.body?.name || "").trim().slice(0, 48);
+    const description = String(req.body?.description || "").trim().slice(0, 240);
+    const avatarData = String(req.body?.avatarData || "");
+    const rawIds = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
+    const memberIds = [...new Set(rawIds.filter(isValidId).filter(id => id !== req.userId))];
+    if (name.length < 2) return res.status(400).json({ error: "Group name must be at least 2 characters." });
+    if (memberIds.length < 2) return res.status(400).json({ error: "Choose at least 2 accepted friends to create a group." });
+    if (memberIds.length > 99) return res.status(400).json({ error: "A group can have up to 100 members." });
+    if (avatarData && (!/^data:image\/(png|jpeg|webp|gif);base64,/.test(avatarData) || avatarData.length > 1000000)) return res.status(400).json({ error: "Group image must be a PNG, JPG, WEBP or GIF under 1 MB." });
+    if (!(await areAcceptedFriends(req.userId, memberIds))) return res.status(403).json({ error: "Groups can only include your accepted friends." });
+    const ids = [req.userId, ...memberIds];
+    const group = await Group.create({ name, description, avatarData, createdBy: req.userId, admins: [req.userId], members: ids.map(userId => ({ userId })) });
+    for (const id of ids) io.in(id.toString()).socketsJoin("group:" + group._id.toString());
+    return res.status(201).json({ group: await serializeGroup(group, req.userId) });
+  } catch (err) { return next(err); }
+});
+app.get("/api/groups/:groupId/messages", requireAuth, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.groupId)) return res.status(400).json({ error: "Invalid group." });
+    const group = await Group.findById(req.params.groupId);
+    if (!group || !isGroupMember(group, req.userId)) return res.status(404).json({ error: "Group not found." });
+    const messages = await GroupMessage.find({ groupId: group._id }).sort({ createdAt: 1 }).limit(500);
+    const senders = await User.find({ _id: { $in: [...new Set(messages.map(message => message.senderId.toString()))] } }).select("username displayName avatarData");
+    const senderMap = new Map(senders.map(user => [user._id.toString(), user]));
+    return res.json({ messages: messages.map(message => { const sender = senderMap.get(message.senderId.toString()); return { _id: message._id.toString(), groupId: group._id.toString(), senderId: message.senderId.toString(), senderName: sender?.displayName || sender?.username || "Member", senderUsername: sender?.username || "", senderAvatar: sender?.avatarData || "", body: message.body, contentType: message.contentType, mediaUrl: message.mediaUrl, mediaPreviewUrl: message.mediaPreviewUrl, reactions: (message.reactions || []).map(item => ({ userId: item.userId.toString(), emoji: item.emoji })), replyTo: message.replyTo?.toString() || null, createdAt: message.createdAt }; }) });
+  } catch (err) { return next(err); }
+});
+app.patch("/api/groups/:groupId", requireAuth, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.groupId)) return res.status(400).json({ error: "Invalid group." });
+    const group = await Group.findById(req.params.groupId);
+    if (!group || !isGroupMember(group, req.userId)) return res.status(404).json({ error: "Group not found." });
+    if (!isGroupAdmin(group, req.userId)) return res.status(403).json({ error: "Only group admins can edit group details." });
+    if (typeof req.body?.name === "string") { const name = req.body.name.trim().slice(0, 48); if (name.length < 2) return res.status(400).json({ error: "Group name must be at least 2 characters." }); group.name = name; }
+    if (typeof req.body?.description === "string") group.description = req.body.description.trim().slice(0, 240);
+    if (typeof req.body?.avatarData === "string") { if (req.body.avatarData && (!/^data:image\/(png|jpeg|webp|gif);base64,/.test(req.body.avatarData) || req.body.avatarData.length > 1000000)) return res.status(400).json({ error: "Choose a valid group image under 1 MB." }); group.avatarData = req.body.avatarData; }
+    await group.save();
+    io.to("group:" + group._id.toString()).emit("group:updated", { groupId: group._id.toString() });
+    return res.json({ group: await serializeGroup(group, req.userId) });
+  } catch (err) { return next(err); }
+});
+app.post("/api/groups/:groupId/members", requireAuth, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.groupId) || !isValidId(req.body?.userId)) return res.status(400).json({ error: "Choose a valid friend." });
+    const group = await Group.findById(req.params.groupId);
+    if (!group || !isGroupMember(group, req.userId)) return res.status(404).json({ error: "Group not found." });
+    if (!isGroupAdmin(group, req.userId)) return res.status(403).json({ error: "Only admins can add members." });
+    const userId = req.body.userId;
+    if (isGroupMember(group, userId)) return res.status(409).json({ error: "That person is already in this group." });
+    if (group.members.length >= 100) return res.status(400).json({ error: "This group has reached its 100 member limit." });
+    if (!(await areAcceptedFriends(req.userId, [userId]))) return res.status(403).json({ error: "You can only add your accepted friends." });
+    const user = await User.findById(userId).select("_id isDisabled");
+    if (!user || user.isDisabled) return res.status(404).json({ error: "Friend not found." });
+    group.members.push({ userId }); await group.save();
+    io.in(userId).socketsJoin("group:" + group._id.toString());
+    io.to("group:" + group._id.toString()).emit("group:updated", { groupId: group._id.toString() });
+    return res.json({ group: await serializeGroup(group, req.userId) });
+  } catch (err) { return next(err); }
+});
+app.delete("/api/groups/:groupId/members/:userId", requireAuth, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.groupId) || !isValidId(req.params.userId)) return res.status(400).json({ error: "Invalid group member." });
+    const group = await Group.findById(req.params.groupId);
+    if (!group || !isGroupMember(group, req.userId)) return res.status(404).json({ error: "Group not found." });
+    const targetId = req.params.userId, leavingSelf = targetId === req.userId;
+    if (!leavingSelf && !isGroupAdmin(group, req.userId)) return res.status(403).json({ error: "Only admins can remove other members." });
+    if (!isGroupMember(group, targetId)) return res.status(404).json({ error: "Member not found." });
+    if (targetId === group.createdBy.toString() && group.members.length > 1) return res.status(400).json({ error: "Group creator cannot leave until ownership is transferred or other members leave." });
+    group.members = group.members.filter(member => member.userId.toString() !== targetId);
+    group.admins = group.admins.filter(id => id.toString() !== targetId);
+    if (!group.members.length) { await GroupMessage.deleteMany({ groupId: group._id }); await group.deleteOne(); io.to("group:" + group._id.toString()).emit("group:deleted", { groupId: group._id.toString() }); }
+    else { await group.save(); io.to("group:" + group._id.toString()).emit("group:updated", { groupId: group._id.toString() }); }
+    io.in(targetId).socketsLeave("group:" + group._id.toString());
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
 app.get("/api/admin/users", requireAuth, requireAdmin, async (_req, res, next) => {
   try { const users = await User.find().select("username displayName role isDisabled createdAt").sort({ createdAt: -1 }).limit(1000); return res.json({ users: users.map(u => ({ id: u._id.toString(), username: u.username, displayName: u.displayName, role: u.role, isDisabled: u.isDisabled, createdAt: u.createdAt })) }); }
   catch (err) { return next(err); }
