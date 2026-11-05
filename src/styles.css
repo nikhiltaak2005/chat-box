@@ -277,7 +277,7 @@
 
 
 /* Group chat navigation and focused group surfaces */
-.home-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:5px;margin:0 0 8px;border:1px solid #30313a;border-radius:12px;background:#17181e}
+.home-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:5px;margin:0 0 8px;border:1px solid #30313a;border-radius:12px;background:#17181e}
 .home-tabs button{min-width:0;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 5px;border:0;border-radius:8px;background:transparent;color:#9698a4;font-size:11px;font-weight:600;transition:background .16s,color .16s}
 .home-tabs button span{min-width:17px;padding:2px 5px;border-radius:99px;background:#2b2c34;color:#bfc0ca;font-size:9px}
 .home-tabs button:hover{background:#25262e;color:#fff}
