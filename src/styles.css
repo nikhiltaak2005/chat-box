@@ -208,3 +208,69 @@
 .app-shell.theme-light .message-actions button{background:#f2f2f6;color:#353642;border-color:#d5d5df}
 .app-shell.theme-light .message-actions button[title="Delete for me"],
 .app-shell.theme-light .message-actions button[title="Delete for everyone"]{color:#a52b38;border-color:#e3b8bd}
+
+
+/* PocketChat refresh: calmer spacing, clearer hierarchy and a roomier desktop layout */
+.app-shell{background:radial-gradient(ellipse at 100% 0%,color-mix(in srgb,var(--accent,#fa8059) 11%,#171820),#111318 62%);border:1px solid #30313a;border-radius:15px;box-shadow:0 18px 55px #0003}
+.titlebar{height:58px;padding:0 15px;background:rgba(21,22,28,.96);gap:11px}
+.brand-mark{width:32px;height:32px;border-radius:11px;box-shadow:0 5px 18px color-mix(in srgb,var(--accent,#fa8059) 22%,transparent)}
+.brand-title{font-size:16px;letter-spacing:-.7px}
+.titlebar .icon-btn{width:31px;height:31px;border-radius:9px}
+.auth-view{max-width:470px;width:100%;margin:0 auto;padding:34px 32px 28px}
+.auth-view h1{font-size:34px;line-height:1.12}
+.auth-form{gap:17px}
+.auth-form input,.searchbox input,.composer input,.composer textarea,.setting-input,.setting-select{transition:border-color .18s,background .18s,box-shadow .18s}
+.auth-form input:focus,.setting-input:focus,.setting-select:focus,.composer-input:focus{border-color:var(--accent,#fa8059);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent,#fa8059) 15%,transparent)}
+.primary-btn{min-height:40px;padding:11px 16px;border-radius:10px;box-shadow:0 5px 16px color-mix(in srgb,var(--accent,#fa8059) 15%,transparent);transition:transform .16s,filter .16s}
+.primary-btn:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.contacts-view{padding:25px 22px 16px;gap:0}
+.welcome-row{margin-bottom:20px}
+.welcome-row h2{font-size:31px}
+.me-card{padding:13px;border-radius:14px;margin-bottom:17px;background:linear-gradient(110deg,color-mix(in srgb,var(--accent,#fa8059) 12%,#202128),#1d1e25);border-color:#3b3435}
+.avatar{width:42px;height:42px;border-radius:14px}
+.searchbox{height:44px;border-radius:12px;padding:0 13px}
+.searchbox input{font-size:12px}
+.section-label{margin:22px 3px 9px;letter-spacing:1.5px}
+.contact-list{padding:2px 1px}
+.contact-row{min-height:62px;padding:10px;border:1px solid transparent;border-bottom-color:#292a32;border-radius:11px;transition:background .16s,border-color .16s}
+.contact-row:hover{border-color:#39343a;background:#24242c}
+.contact-meta strong{font-size:13px}
+.contact-meta small{font-size:10px}
+.footer-note{padding:14px 0 3px;font-size:9px;letter-spacing:1.4px}
+.chat-header{height:72px;padding:0 16px;gap:11px;background:rgba(20,21,26,.45)}
+.chat-header .avatar{width:40px;height:40px}
+.messages{padding:20px 18px;gap:14px}
+.message{max-width:82%}
+.bubble{font-size:13px;line-height:1.55;padding:10px 13px;border-radius:15px}
+.mine .bubble{border-bottom-right-radius:5px}
+.theirs .bubble{border-bottom-left-radius:5px}
+.composer{padding:13px 15px;gap:9px;background:rgba(18,19,24,.75)}
+.composer-input{min-height:42px;max-height:120px;resize:none;flex:1;width:100%;border:1px solid #35363f;background:#1b1c22;color:#f4f4f6;outline:none;border-radius:12px;padding:11px 12px;font-size:12px;line-height:1.4}
+.send-btn{width:42px;height:42px;border-radius:12px}
+.settings-dialog{width:min(760px,100%);max-height:92vh;border-radius:20px}
+.settings-heading{padding:22px 25px 17px}
+.settings-body{grid-template-columns:176px minmax(0,1fr)}
+.settings-nav{padding:16px 11px}
+.settings-tab{padding:11px 12px;border-radius:10px;font-size:12px}
+.settings-content{padding:22px 26px}
+.settings-section{gap:17px}
+.settings-section h3{font-size:20px}
+.settings-field,.settings-toggle strong{font-size:12px}
+.settings-field>small,.settings-toggle small{font-size:11px}
+.settings-input,.setting-select{min-height:40px}
+.settings-footer{padding:14px 22px}
+.settings-footer .primary-btn{min-width:130px}
+.settings-range{width:100%;accent-color:var(--accent,#fa8059)}
+.settings-note{border-radius:10px;line-height:1.65}
+.profile-dialog{width:min(390px,100%);padding:24px;border-radius:20px}
+@media(max-width:520px){
+ .contacts-view{padding:19px 14px 12px}
+ .auth-view{padding:25px 20px}
+ .settings-dialog{max-height:95vh}
+ .settings-body{grid-template-columns:118px minmax(0,1fr)}
+ .settings-content{padding:15px 12px}
+ .settings-heading{padding:16px}
+ .settings-nav{padding:10px 6px}
+ .settings-tab{font-size:10px;padding:9px 7px}
+ .settings-footer{padding:10px 12px}
+}
