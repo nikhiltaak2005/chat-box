@@ -118,6 +118,38 @@ const groupMessageSchema = new Schema({
 }, { timestamps: true });
 const GroupMessage = mongoose.model("GroupMessage", groupMessageSchema);
 
+const reportSchema = new Schema({
+  reporterId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+  targetType: { type: String, enum: ["user", "group", "message"], required: true },
+  targetId: { type: String, required: true },
+  reason: { type: String, enum: ["spam", "harassment", "impersonation", "inappropriate", "scam", "other"], default: "other" },
+  details: { type: String, trim: true, maxlength: 1000, default: "" },
+  status: { type: String, enum: ["pending", "reviewing", "resolved", "dismissed"], default: "pending", index: true },
+  moderatorNote: { type: String, trim: true, maxlength: 1000, default: "" },
+  reviewedBy: { type: Schema.Types.ObjectId, ref: "User", default: null }
+}, { timestamps: true });
+const Report = mongoose.model("Report", reportSchema);
+
+const auditSchema = new Schema({
+  actorId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+  action: { type: String, required: true, maxlength: 80 },
+  targetType: { type: String, default: "" },
+  targetId: { type: String, default: "" },
+  details: { type: String, maxlength: 500, default: "" }
+}, { timestamps: true });
+const AuditLog = mongoose.model("AuditLog", auditSchema);
+
+const appSettingSchema = new Schema({
+  key: { type: String, unique: true, default: "global" },
+  maintenanceMode: { type: Boolean, default: false },
+  announcement: { type: String, maxlength: 300, default: "" },
+  announcementEnabled: { type: Boolean, default: false },
+  minimumVersion: { type: String, maxlength: 20, default: "0.3.0" },
+  updatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null }
+}, { timestamps: true });
+const AppSetting = mongoose.model("AppSetting", appSettingSchema);
+
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -630,19 +662,75 @@ app.delete("/api/groups/:groupId/members/:userId", requireAuth, async (req, res,
   } catch (err) { return next(err); }
 });
 
-app.get("/api/admin/users", requireAuth, requireAdmin, async (_req, res, next) => {
-  try { const users = await User.find().select("username displayName role isDisabled createdAt").sort({ createdAt: -1 }).limit(1000); return res.json({ users: users.map(u => ({ id: u._id.toString(), username: u.username, displayName: u.displayName, role: u.role, isDisabled: u.isDisabled, createdAt: u.createdAt })) }); }
-  catch (err) { return next(err); }
+
+async function writeAudit(actorId, action, targetType = "", targetId = "", details = "") {
+  try { await AuditLog.create({ actorId, action, targetType, targetId: String(targetId || ""), details: String(details || "").slice(0, 500) }); }
+  catch (err) { console.error("[audit] Could not save admin event:", err.message); }
+}
+
+app.get("/api/app-config", requireAuth, async (_req, res, next) => {
+  try {
+    const config = await AppSetting.findOne({ key: "global" }).lean();
+    return res.json({ maintenanceMode: Boolean(config?.maintenanceMode), announcement: config?.announcement || "", announcementEnabled: Boolean(config?.announcementEnabled), minimumVersion: config?.minimumVersion || "0.3.0" });
+  } catch (err) { return next(err); }
+});
+
+app.post("/api/reports", requireAuth, async (req, res, next) => {
+  try {
+    const targetType = String(req.body?.targetType || "");
+    const targetId = String(req.body?.targetId || "").trim();
+    const reason = String(req.body?.reason || "other");
+    const details = String(req.body?.details || "").trim().slice(0, 1000);
+    if (!["user", "group", "message"].includes(targetType) || !targetId || targetId.length > 80) return res.status(400).json({ error: "Choose a valid item to report." });
+    if (!["spam", "harassment", "impersonation", "inappropriate", "scam", "other"].includes(reason)) return res.status(400).json({ error: "Choose a valid report reason." });
+    if (targetType === "user" && (!isValidId(targetId) || !(await User.exists({ _id: targetId })))) return res.status(404).json({ error: "Reported user not found." });
+    if (targetType === "group" && (!isValidId(targetId) || !(await Group.exists({ _id: targetId })))) return res.status(404).json({ error: "Reported group not found." });
+    if (targetType === "message" && (!isValidId(targetId) || (!(await Message.exists({ _id: targetId })) && !(await GroupMessage.exists({ _id: targetId }))))) return res.status(404).json({ error: "Reported message not found." });
+    const duplicate = await Report.findOne({ reporterId: req.userId, targetType, targetId, status: { $in: ["pending", "reviewing"] } });
+    if (duplicate) return res.status(409).json({ error: "You already have an open report for this item." });
+    const report = await Report.create({ reporterId: req.userId, targetType, targetId, reason, details });
+    return res.status(201).json({ ok: true, reportId: report._id.toString() });
+  } catch (err) { return next(err); }
+});
+
+app.get("/api/admin/overview", requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [totalUsers, activeUsers, disabledUsers, admins, totalGroups, totalMessages, groupMessages, pendingReports, newUsersToday, config] = await Promise.all([
+      User.countDocuments(), User.countDocuments({ isDisabled: { $ne: true }, lastSeenAt: { $gte: since } }), User.countDocuments({ isDisabled: true }), User.countDocuments({ role: "admin", isDisabled: { $ne: true } }),
+      Group.countDocuments(), Message.countDocuments(), GroupMessage.countDocuments(), Report.countDocuments({ status: { $in: ["pending", "reviewing"] } }), User.countDocuments({ createdAt: { $gte: since } }), AppSetting.findOne({ key: "global" }).lean()
+    ]);
+    return res.json({ stats: { totalUsers, activeUsers, disabledUsers, admins, totalGroups, totalMessages: totalMessages + groupMessages, pendingReports, newUsersToday }, config: { maintenanceMode: Boolean(config?.maintenanceMode), announcement: config?.announcement || "", announcementEnabled: Boolean(config?.announcementEnabled), minimumVersion: config?.minimumVersion || "0.3.0" } });
+  } catch (err) { return next(err); }
+});
+
+app.get("/api/admin/users", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const search = String(req.query?.search || "").trim().toLowerCase().slice(0, 40);
+    const filter = search ? { $or: [{ username: { $regex: search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } }, { displayName: { $regex: search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } }] } : {};
+    const users = await User.find(filter).select("username displayName role isDisabled createdAt lastSeenAt").sort({ createdAt: -1 }).limit(500);
+    return res.json({ users: users.map(u => ({ id: u._id.toString(), username: u.username, displayName: u.displayName, role: u.role, isDisabled: u.isDisabled, createdAt: u.createdAt, lastSeenAt: u.lastSeenAt })) });
+  } catch (err) { return next(err); }
 });
 app.patch("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     if (!isValidId(req.params.userId)) return res.status(400).json({ error: "Invalid user id." });
-    if (req.params.userId === req.userId) return res.status(400).json({ error: "You cannot disable your own admin account." });
-    const isDisabled = Boolean(req.body?.isDisabled);
-    const user = await User.findByIdAndUpdate(req.params.userId, { $set: { isDisabled } }, { new: true }).select("username isDisabled");
+    if (req.params.userId === req.userId) return res.status(400).json({ error: "You cannot change your own admin account." });
+    const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ error: "User not found." });
-    if (user.isDisabled) io.in(user._id.toString()).disconnectSockets(true);
-    return res.json({ id: user._id.toString(), username: user.username, isDisabled: user.isDisabled });
+    if (typeof req.body?.isDisabled === "boolean") {
+      if (user.role === "admin" && req.body.isDisabled && await User.countDocuments({ role: "admin", isDisabled: { $ne: true } }) <= 1) return res.status(400).json({ error: "At least one active admin must remain." });
+      user.isDisabled = req.body.isDisabled;
+      if (user.isDisabled) { user.tokenVersion += 1; io.in(user._id.toString()).disconnectSockets(true); }
+    }
+    if (typeof req.body?.role === "string") {
+      if (!["user", "admin"].includes(req.body.role)) return res.status(400).json({ error: "Invalid role." });
+      if (user.role === "admin" && req.body.role === "user" && !user.isDisabled && await User.countDocuments({ role: "admin", isDisabled: { $ne: true } }) <= 1) return res.status(400).json({ error: "At least one active admin must remain." });
+      user.role = req.body.role;
+    }
+    await user.save();
+    await writeAudit(req.userId, "user.updated", "user", user._id, `role=${user.role}; disabled=${user.isDisabled}`);
+    return res.json({ id: user._id.toString(), username: user.username, role: user.role, isDisabled: user.isDisabled });
   } catch (err) { return next(err); }
 });
 app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, res, next) => {
@@ -651,19 +739,90 @@ app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, re
     if (req.params.userId === req.userId) return res.status(400).json({ error: "You cannot delete your own admin account." });
     const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ error: "User not found." });
+    if (user.role === "admin" && !user.isDisabled && await User.countDocuments({ role: "admin", isDisabled: { $ne: true } }) <= 1) return res.status(400).json({ error: "Promote another admin before deleting this account." });
     const conversations = await Conversation.find({ participants: user._id }).select("_id");
     const conversationIds = conversations.map(c => c._id);
     io.in(user._id.toString()).disconnectSockets(true);
     await Message.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }, { conversationId: { $in: conversationIds } }] });
     await Conversation.deleteMany({ _id: { $in: conversationIds } });
     await FriendRequest.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }] });
+    await Report.deleteMany({ reporterId: user._id });
     await removeUserFromGroups(user._id);
     await User.deleteOne({ _id: user._id });
+    await writeAudit(req.userId, "user.deleted", "user", user._id, user.username);
     return res.json({ ok: true, deletedUsername: user.username });
   } catch (err) { return next(err); }
 });
+
+app.get("/api/admin/groups", requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const groups = await Group.find().sort({ updatedAt: -1 }).limit(300);
+    const owners = await User.find({ _id: { $in: groups.map(g => g.createdBy) } }).select("username");
+    const ownerMap = new Map(owners.map(u => [u._id.toString(), u.username]));
+    return res.json({ groups: groups.map(g => ({ id: g._id.toString(), name: g.name, description: g.description, memberCount: g.members.length, createdBy: ownerMap.get(g.createdBy.toString()) || "Deleted user", createdAt: g.createdAt, updatedAt: g.updatedAt })) });
+  } catch (err) { return next(err); }
+});
+app.delete("/api/admin/groups/:groupId", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.groupId)) return res.status(400).json({ error: "Invalid group id." });
+    const group = await Group.findById(req.params.groupId);
+    if (!group) return res.status(404).json({ error: "Group not found." });
+    io.to("group:" + group._id.toString()).emit("group:deleted", { groupId: group._id.toString() });
+    for (const memberId of groupMemberIds(group)) io.in(memberId).socketsLeave("group:" + group._id.toString());
+    await GroupMessage.deleteMany({ groupId: group._id });
+    await group.deleteOne();
+    await writeAudit(req.userId, "group.deleted", "group", req.params.groupId, group.name);
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+app.get("/api/admin/reports", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const status = String(req.query?.status || "");
+    const filter = ["pending", "reviewing", "resolved", "dismissed"].includes(status) ? { status } : {};
+    const reports = await Report.find(filter).sort({ createdAt: -1 }).limit(300).lean();
+    const reporterIds = [...new Set(reports.map(r => r.reporterId.toString()))];
+    const reporters = await User.find({ _id: { $in: reporterIds } }).select("username");
+    const reporterMap = new Map(reporters.map(u => [u._id.toString(), u.username]));
+    return res.json({ reports: reports.map(r => ({ id: r._id.toString(), reporter: reporterMap.get(r.reporterId.toString()) || "Deleted user", targetType: r.targetType, targetId: r.targetId, reason: r.reason, details: r.details, status: r.status, moderatorNote: r.moderatorNote, createdAt: r.createdAt })) });
+  } catch (err) { return next(err); }
+});
+app.patch("/api/admin/reports/:reportId", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.reportId)) return res.status(400).json({ error: "Invalid report id." });
+    const status = String(req.body?.status || "");
+    if (!["pending", "reviewing", "resolved", "dismissed"].includes(status)) return res.status(400).json({ error: "Invalid report status." });
+    const report = await Report.findByIdAndUpdate(req.params.reportId, { $set: { status, moderatorNote: String(req.body?.moderatorNote || "").trim().slice(0, 1000), reviewedBy: req.userId } }, { new: true });
+    if (!report) return res.status(404).json({ error: "Report not found." });
+    await writeAudit(req.userId, "report.reviewed", "report", report._id, status);
+    return res.json({ ok: true, status: report.status });
+  } catch (err) { return next(err); }
+});
+
+app.get("/api/admin/audit", requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(150).lean();
+    const ids = [...new Set(logs.map(log => log.actorId.toString()))];
+    const actors = await User.find({ _id: { $in: ids } }).select("username");
+    const actorMap = new Map(actors.map(u => [u._id.toString(), u.username]));
+    return res.json({ logs: logs.map(log => ({ id: log._id.toString(), actor: actorMap.get(log.actorId.toString()) || "Deleted admin", action: log.action, targetType: log.targetType, targetId: log.targetId, details: log.details, createdAt: log.createdAt })) });
+  } catch (err) { return next(err); }
+});
+
+app.patch("/api/admin/config", requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const update = {};
+    if (typeof req.body?.maintenanceMode === "boolean") update.maintenanceMode = req.body.maintenanceMode;
+    if (typeof req.body?.announcementEnabled === "boolean") update.announcementEnabled = req.body.announcementEnabled;
+    if (typeof req.body?.announcement === "string") update.announcement = req.body.announcement.trim().slice(0, 300);
+    if (typeof req.body?.minimumVersion === "string" && /^\\d+\\.\\d+\\.\\d+$/.test(req.body.minimumVersion)) update.minimumVersion = req.body.minimumVersion;
+    const config = await AppSetting.findOneAndUpdate({ key: "global" }, { $set: { ...update, updatedBy: req.userId } }, { new: true, upsert: true, setDefaultsOnInsert: true });
+    await writeAudit(req.userId, "app.config.updated", "config", "global", JSON.stringify(update));
+    return res.json({ config: { maintenanceMode: config.maintenanceMode, announcement: config.announcement, announcementEnabled: config.announcementEnabled, minimumVersion: config.minimumVersion } });
+  } catch (err) { return next(err); }
+});
 app.delete("/api/admin/storage/expired", requireAuth, requireAdmin, async (_req, res, next) => {
-  try { const result = await Message.deleteMany({ deleteAt: { $ne: null, $lte: new Date() } }); return res.json({ ok: true, deletedMessages: result.deletedCount || 0 }); }
+  try { const result = await Message.deleteMany({ deleteAt: { $ne: null, $lte: new Date() } }); await GroupMessage.deleteMany({ createdAt: { $lt: new Date(Date.now() - 365 * 86400000) } }); await writeAudit(_req.userId, "storage.expired.cleaned", "storage", "expired", String(result.deletedCount || 0)); return res.json({ ok: true, deletedMessages: result.deletedCount || 0 }); }
   catch (err) { return next(err); }
 });
 
