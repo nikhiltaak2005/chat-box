@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Bell, Palette, ShieldCheck, X, RotateCcw, Save, Image as ImageIcon, UserRound, Download, Upload, LogOut, Trash2 } from "lucide-react";
 
-export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false, appLockEnabled: false, appLockTimeoutMinutes: 5 };
+export const DEFAULT_DEVICE_PREFERENCES = { pet: { avatar: "cat", customAvatarData: "", displayName: "PocketPal", showName: true, size: 88, opacity: 100, alwaysOnTop: true, animate: true }, launchAtStartup: false, appLockEnabled: false, appLockTimeoutMinutes: 5 };
 
 export const DEFAULT_PREFERENCES = {
   appearance: { theme: "dark", accentColor: "#fa8059", wallpaperColor: "#111318", fontScale: 1, density: "comfortable", bubbleStyle: "rounded" },
@@ -75,7 +75,9 @@ export default function SettingsCenter({ value, devicePreferences, user, onSave,
             customAvatarData,
             size: Number.isFinite(Number(importedPet.size)) ? Math.max(64, Math.min(144, Math.round(Number(importedPet.size) / 8) * 8)) : 88,
             opacity: Number.isFinite(Number(importedPet.opacity)) ? Math.max(40, Math.min(100, Number(importedPet.opacity))) : 100,
-            alwaysOnTop: importedPet.alwaysOnTop !== false,
+            displayName: typeof importedPet.displayName === "string" ? importedPet.displayName.slice(0, 24) : "PocketPal",
+            showName: importedPet.showName !== false,
+            alwaysOnTop: true,
             animate: importedPet.animate !== false
           }
         });
@@ -157,12 +159,14 @@ export default function SettingsCenter({ value, devicePreferences, user, onSave,
             <Field label="Confirm account deletion" description="Enter your account password. This action cannot be undone."><input className="setting-input" type="password" autoComplete="current-password" value={deletePassword} onChange={e=>setDeletePassword(e.target.value)} placeholder="Account password"/></Field>
             <button type="button" className="danger-btn settings-action" disabled={accountBusy || !deletePassword} onClick={deleteAccount}><Trash2 size={14}/> Permanently delete account</button>
           </div>}
-          {tab === "pet" && <div className="settings-section"><h3>Pet & Desktop</h3><p className="muted">These settings stay on this PC and are not synced to your account.</p>
+          {tab === "pet" && <div className="settings-section"><h3>Floating pet</h3><p className="muted">Personalize the little companion that stays above your Windows apps. These options are saved on this PC.</p>
             <Field label="Pet mascot"><select className="setting-select" value={deviceDraft.pet.avatar} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,avatar:e.target.value}}))}><option value="cat">🐱 Orange cat</option>{deviceDraft.pet.customAvatarData && <option value="custom">Custom image</option>}<option value="fox">🦊 Fox</option><option value="dog">🐶 Dog</option><option value="panda">🐼 Panda</option><option value="rabbit">🐰 Rabbit</option><option value="robot">🤖 Robot</option><option value="ghost">👻 Ghost</option><option value="frog">🐸 Frog</option></select></Field>
             <Field label="Custom pet image" description="PNG, JPG or WebP; maximum 1 MB. Stored on this PC."><input className="setting-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={handlePetAvatar}/>{deviceDraft.pet.customAvatarData && <button type="button" className="text-btn" onClick={()=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,avatar:"cat",customAvatarData:""}}))}>Remove custom image</button>}</Field>
+            <Field label="Name below pet" description="Choose the label shown underneath your floating pet."><input className="setting-input" value={deviceDraft.pet.displayName || ""} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,displayName:e.target.value.slice(0,24)}}))} placeholder="e.g. Buddy, Chiku, Momo" maxLength={24}/></Field>
+            <label className="settings-toggle"><span><strong>Show pet name</strong><small>Turn this off to hide the label completely.</small></span><input type="checkbox" checked={deviceDraft.pet.showName !== false} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,showName:e.target.checked}}))}/></label>
             <Field label={"Pet size · " + deviceDraft.pet.size + " px"}><input className="settings-range" type="range" min="64" max="144" step="8" value={deviceDraft.pet.size} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,size:Number(e.target.value)}}))}/></Field>
             <Field label={"Opacity · " + deviceDraft.pet.opacity + "%"}><input className="settings-range" type="range" min="40" max="100" step="5" value={deviceDraft.pet.opacity} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,opacity:Number(e.target.value)}}))}/></Field>
-            <label className="settings-toggle"><span><strong>Always on top</strong><small>Keep the floating pet above other windows.</small></span><input type="checkbox" checked={deviceDraft.pet.alwaysOnTop} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,alwaysOnTop:e.target.checked}}))}/></label>
+            <div className="settings-note">Always on top is permanently enabled for the floating pet. The chat window has its own pin control in the title bar.</div>
             <label className="settings-toggle"><span><strong>Pet animation</strong><small>Enable hover movement and playful feedback.</small></span><input type="checkbox" checked={deviceDraft.pet.animate} onChange={e=>setDeviceDraft(prev=>({...prev,pet:{...prev.pet,animate:e.target.checked}}))}/></label>
             <label className="settings-toggle"><span><strong>Start with Windows</strong><small>Launch PocketChat when you sign in to Windows.</small></span><input type="checkbox" checked={deviceDraft.launchAtStartup} onChange={e=>setDeviceDraft(prev=>({...prev,launchAtStartup:e.target.checked}))}/></label>
             <label className="settings-toggle"><span><strong>App lock</strong><small>Require your account password after inactivity and when the app starts.</small></span><input type="checkbox" checked={deviceDraft.appLockEnabled} onChange={e=>setDeviceDraft(prev=>({...prev,appLockEnabled:e.target.checked}))}/></label>
