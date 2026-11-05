@@ -274,3 +274,67 @@
  .settings-tab{font-size:10px;padding:9px 7px}
  .settings-footer{padding:10px 12px}
 }
+
+
+/* Group chat navigation and focused group surfaces */
+.home-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:5px;margin:0 0 8px;border:1px solid #30313a;border-radius:12px;background:#17181e}
+.home-tabs button{min-width:0;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 5px;border:0;border-radius:8px;background:transparent;color:#9698a4;font-size:11px;font-weight:600;transition:background .16s,color .16s}
+.home-tabs button span{min-width:17px;padding:2px 5px;border-radius:99px;background:#2b2c34;color:#bfc0ca;font-size:9px}
+.home-tabs button:hover{background:#25262e;color:#fff}
+.home-tabs button.active{background:color-mix(in srgb,var(--accent,#fa8059) 18%,#1d1e25);color:var(--accent,#fa8059)}
+.home-tabs button.active span{background:color-mix(in srgb,var(--accent,#fa8059) 20%,#24252c);color:var(--accent,#fa8059)}
+.group-list-panel{display:flex;flex-direction:column;gap:5px;min-height:0;flex:1;overflow:auto;padding:3px 1px}
+.group-list-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 3px 12px}
+.group-list-heading>div{display:flex;flex-direction:column;gap:4px}
+.group-list-heading strong{font:600 16px 'Space Grotesk',sans-serif;color:#f1f1f5}
+.group-list-heading small{font-size:10px;color:#858793}
+.group-list-heading .primary-btn{display:flex;align-items:center;gap:6px;white-space:nowrap;margin:0;padding:9px 11px;font-size:10px}
+.group-row{width:100%;min-height:65px;display:flex;align-items:center;gap:11px;padding:9px 8px;border:1px solid transparent;border-bottom-color:#292a32;border-radius:11px;background:transparent;color:#eee;text-align:left;transition:background .16s,border-color .16s}
+.group-row:hover{background:#24242c;border-color:#39343a}
+.group-avatar{width:43px;height:43px;flex-shrink:0;display:grid;place-items:center;overflow:hidden;border:1px solid #49404a;border-radius:15px;background:linear-gradient(145deg,#45302e,#292a36);color:#ffb08d}
+.group-avatar img{width:100%;height:100%;object-fit:cover}
+.group-row .contact-meta{gap:5px}
+.group-row .contact-meta strong{font-size:12px}
+.group-row .contact-meta small{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
+.group-count{flex-shrink:0;padding:4px 7px;border-radius:99px;background:#2a2b33;color:#b7b8c2;font-size:9px}
+.group-sender{margin:0 0 5px;color:#ffad8b;font-size:10px;font-weight:700;letter-spacing:.2px}
+.group-dialog{width:min(440px,100%);gap:13px}
+.group-dialog>label:not(.group-photo-picker),.group-edit-form label{display:flex;flex-direction:column;gap:6px;color:#d7d7df;font-size:11px;font-weight:600}
+.group-dialog input:not([type=file]),.group-edit-form input:not([type=file]){width:100%;border:1px solid #35363f;background:#1b1c22;color:#f4f4f6;outline:none;border-radius:9px;padding:11px;font-size:12px}
+.group-dialog input:focus,.group-edit-form input:focus{border-color:var(--accent,#fa8059)}
+.group-photo-picker{width:78px;height:78px;align-self:center;display:grid;place-items:center;position:relative;overflow:hidden;border:1px dashed #5a4a48;border-radius:23px;background:#29242a;color:#ffae8b}
+.group-photo-picker img{width:100%;height:100%;object-fit:cover}
+.group-photo-picker span{position:absolute;inset:auto 0 0;display:flex;align-items:center;justify-content:center;gap:4px;padding:6px 2px;background:#111c;color:white;font-size:8px}
+.group-photo-picker input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.group-picker-label{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#ffad8b;font-size:9px;font-weight:700;letter-spacing:1px}
+.group-picker-label small{color:#92939e;font-size:9px;font-weight:500;letter-spacing:0}
+.group-friend-picker,.group-member-list{display:flex;flex-direction:column;gap:5px;max-height:190px;overflow:auto;padding:5px;border:1px solid #30313a;border-radius:11px;background:#15161b}
+.group-friend-option{display:flex;align-items:center;gap:9px;padding:7px;border-radius:8px;background:#1d1e25;color:#e7e7ed;font-size:11px;cursor:pointer}
+.group-friend-option:hover{background:#292a32}
+.group-friend-option input{accent-color:var(--accent,#fa8059);width:15px;height:15px}
+.group-friend-option .avatar,.group-member-row .avatar{width:32px;height:32px;border-radius:10px}
+.group-friend-option>span{display:flex;flex-direction:column;gap:3px}
+.group-friend-option small{font-size:9px;color:#8e909b}
+.group-edit-form{display:flex;flex-direction:column;gap:11px}
+.group-photo-inline{display:flex;flex-direction:row!important;align-items:center;justify-content:space-between}
+.group-photo-inline input{max-width:190px;font-size:10px!important}
+.group-edit-form .primary-btn{margin:0}
+.group-member-row{display:flex;align-items:center;gap:9px;padding:6px 4px}
+.group-member-row .contact-meta strong{font-size:11px}
+.group-member-row .contact-meta small{font-size:9px}
+.group-add-row{display:flex;gap:8px;align-items:center}
+.group-add-row select{flex:1;min-width:0}
+.group-add-row .primary-btn{margin:0;min-width:62px}
+.danger-btn{border:1px solid #67343a!important;background:#351e22!important;color:#ffb3b9!important}
+.app-shell.theme-light .home-tabs{background:#ececf2;border-color:#d7d8df}
+.app-shell.theme-light .home-tabs button{color:#666875}
+.app-shell.theme-light .home-tabs button.active{background:#fff;color:var(--accent,#fa8059)}
+.app-shell.theme-light .home-tabs button span,.app-shell.theme-light .group-count{background:#e0e1e8;color:#555663}
+.app-shell.theme-light .group-list-heading strong{color:#20212a}
+.app-shell.theme-light .group-row{color:#20212a;border-bottom-color:#e1e2e8}
+.app-shell.theme-light .group-row:hover{background:#e9eaf0}
+.app-shell.theme-light .group-dialog input:not([type=file]),.app-shell.theme-light .group-edit-form input:not([type=file]){background:#fff;color:#20212a;border-color:#d7d8df}
+.app-shell.theme-light .group-friend-picker,.app-shell.theme-light .group-member-list{background:#f2f2f6;border-color:#d7d8df}
+.app-shell.theme-light .group-friend-option{background:#fff;color:#20212a}
+.app-shell.theme-light .group-list-heading small{color:#656672}
+@media(max-width:480px){.home-tabs button{font-size:10px;gap:4px;padding:9px 3px}.group-list-heading strong{font-size:14px}.group-list-heading .primary-btn{padding:8px}.group-dialog{max-height:94vh}}
