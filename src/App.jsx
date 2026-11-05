@@ -43,7 +43,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState("Connecting…");
-  const [alwaysOnTop, setAlwaysOnTop] = useState(true);
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [error, setError] = useState("");
   const [chatVisible, setChatVisible] = useState(!window.desktop);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -83,7 +83,7 @@ export default function App() {
     window.desktop?.setLaunchAtStartup?.(devicePreferences.launchAtStartup);
   }, [devicePreferences]);
 
-  useEffect(() => { window.desktop?.setAlwaysOnTop(true); }, []);
+  useEffect(() => { window.desktop?.setAlwaysOnTop(alwaysOnTop); }, [alwaysOnTop]);
   useEffect(() => {
     if (!window.desktop?.getUpdateStatus) return;
     window.desktop.getUpdateStatus().then(setUpdateInfo).catch(() => {});
@@ -181,12 +181,9 @@ export default function App() {
     peopleLoadedRef.current = false;
     const refreshPeople = async () => {
       try {
-        const [people, friends] = await Promise.all([
-          request("/api/users", token),
-          request("/api/friends", token)
-        ]);
-        setContacts(people.users || []);
+        const friends = await request("/api/friends", token);
         const nextRequests = friends.requests || [];
+        setContacts(nextRequests.filter(item => item.status === "accepted").map(item => ({ ...item.person, isFriend: true })));
         const existingIds = new Set(friendRequestsRef.current.map(request => request.id));
         const newIncoming = nextRequests.filter(request => request.status === "pending" && request.recipientId === me.id && !existingIds.has(request.id));
         if (peopleLoadedRef.current && newIncoming.length && !visibleRef.current && preferencesRef.current.notifications.enabled && preferencesRef.current.notifications.friendRequests && !newIncoming.some(request => (preferencesRef.current.notifications.mutedContacts || []).includes(request.senderId)) && !isQuietNow(preferencesRef.current.notifications)) {
@@ -333,7 +330,22 @@ export default function App() {
     try {
       await request("/api/friends/" + id, token, { method: "PATCH", body: JSON.stringify({ action }) });
       const data = await request("/api/friends", token); setFriendRequests(data.requests || []);
-      const friends = await request("/api/users", token); setContacts(friends.users || []);
+      const accepted = (data.requests || []).filter(item => item.status === "accepted").map(item => ({ ...item.person, isFriend: true }));
+      setContacts(accepted);
+  async function removeFriend(person) {
+    const friendship = friendRequests.find(item => item.status === "accepted" && item.person?._id === person._id);
+    if (!friendship) return;
+    if (!window.confirm("Remove @" + person.username + " from your friends?")) return;
+    setError("");
+    try {
+      await request("/api/friends/" + friendship.id, token, { method: "DELETE" });
+      const data = await request("/api/friends", token);
+      setFriendRequests(data.requests || []);
+      setContacts((data.requests || []).filter(item => item.status === "accepted").map(item => ({ ...item.person, isFriend: true })));
+      if (active?._id === person._id) { setActive(null); setMessages([]); }
+    } catch (e) { setError(e.message); }
+  }
+
     } catch (e) { setError(e.message); }
   }
 
@@ -467,7 +479,7 @@ export default function App() {
           <button className="icon-btn back" onClick={()=>setActive(null)}><ArrowLeft size={17}/></button>
           <div className="avatar">{active.avatarData ? <img src={active.avatarData} alt=""/> : (active.displayName || active.username).slice(0,1).toUpperCase()}</div>
           <div className="contact-meta"><strong>{active.displayName || active.username}</strong><small>@{active.username}</small></div>
-          <button className="icon-btn" title={(preferences.notifications.mutedContacts || []).includes(active._id) ? "Unmute notifications for this contact" : "Mute notifications for this contact"} onClick={()=>toggleContactMute(active._id).catch(e=>setError(e.message))}>{(preferences.notifications.mutedContacts || []).includes(active._id) ? <BellOff size={15}/> : <Bell size={15}/>}</button><button className="icon-btn" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={15}/></button>
+          <button className="icon-btn" title="Remove friend" onClick={()=>removeFriend(active)}><Trash2 size={15}/></button><button className="icon-btn" title={(preferences.notifications.mutedContacts || []).includes(active._id) ? "Unmute notifications for this contact" : "Mute notifications for this contact"} onClick={()=>toggleContactMute(active._id).catch(e=>setError(e.message))}>{(preferences.notifications.mutedContacts || []).includes(active._id) ? <BellOff size={15}/> : <Bell size={15}/>}</button><button className="icon-btn" title="Settings" onClick={()=>setSettingsCenterOpen(true)}><Settings size={15}/></button>
           <div className="online-dot" title={status}/>
         </div>
         <div className="messages">
@@ -486,7 +498,7 @@ export default function App() {
         <div className="section-label">PEOPLE <span>{filtered.length}</span></div>
         <div className="contact-list">
           {filtered.map(c=>{const pending=friendRequests.find(r=>r.status==="pending" && ((r.senderId===me.id && r.person.username===c.username)||(r.recipientId===me.id && r.person.username===c.username)));return <button key={c._id} className="contact-row" onClick={()=>c.isFriend ? openChat(c) : pending ? (pending.recipientId===me.id ? answerFriendRequest(pending.id,"accept") : setError("Friend request already sent. Waiting for @"+c.username+" to accept.")) : requestFriendForPerson(c.username)}><div className="avatar">{c.avatarData ? <img src={c.avatarData} alt=""/> : (c.displayName||c.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{c.displayName||c.username}</strong><small>@{c.username} · {c.isFriend ? (onlineUserIds.includes(c._id) ? "Online" : c.lastSeenAt ? ("Last seen " + new Date(c.lastSeenAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })) : "Offline") : pending ? (pending.recipientId===me.id ? "Accept incoming request" : "Request sent · waiting") : "Add friend"}</small></div>{c.isFriend ? <MessageCircle size={15} className="open-arrow"/> : pending ? <span className="request-pending">{pending.recipientId===me.id ? "Accept" : "Sent"}</span> : <Plus size={15} className="open-arrow"/>}</button>})}
-          {filtered.length===0 && <div className="empty-people"><UserRound size={22}/><strong>No people yet</strong><span>Create another account on a second device/server to start a conversation.</span></div>}
+          {filtered.length===0 && <div className="empty-people"><UserRound size={22}/><strong>No people yet</strong><span>Search an exact username above to send a friend request. Your friends will appear here.</span></div>}
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
         <div className="footer-note"><Circle size={7} fill="currentColor"/> PRIVATE SPACE · REAL-TIME CHAT</div>
