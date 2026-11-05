@@ -49,7 +49,7 @@ This starts the API, Vite UI, and Electron. Use the pin icon to keep the chat wi
 
 ## 3. Try direct and group messaging
 1. Register two or more accounts on the same backend.
-2. In the Friends area, send a friend request using the exact username.
+2. In the Chats tab, send a friend request using the exact username.
 3. Accept the incoming request on the other account.
 4. Open Chats for direct messages, or Groups → New group to create a private group with at least two accepted friends.
 5. Group admins can edit group details, add accepted friends, promote/demote admins, and remove members.
