@@ -51,9 +51,13 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   });
   console.log("PASS register ->", alice.user.username, "/", bob.user.username);
 
-  const users = await req("/api/users", { token: alice.token });
-  if (!users.users.find((u) => u._id === bob.user.id)) throw new Error("bob not listed in /api/users for alice");
-  console.log("PASS GET /api/users ->", users.users.map((u) => u.username).join(", "));
+  const publicDirectory = await fetch(API + "/api/users", { headers: { Authorization: "Bearer " + alice.token } });
+  if (publicDirectory.status !== 404) throw new Error("public user directory should not be available");
+  const exactSearch = await req("/api/users/search?username=" + b, { token: alice.token });
+  if (!exactSearch.users.some(user => user.username === b) || exactSearch.users.length !== 1) throw new Error("exact username search did not return one exact match");
+  const partialSearch = await req("/api/users/search?username=" + b.slice(0, -1), { token: alice.token });
+  if (partialSearch.users.length !== 0) throw new Error("partial username search should not expose user suggestions");
+  console.log("PASS private directory disabled and exact username search enforced");
 
   const login = await req("/api/auth/login", { method: "POST", body: { username: a, password: "password123" } });
   if (login.user.id !== alice.user.id) throw new Error("login returned a different user");
@@ -86,12 +90,34 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   const aliceSocket = await connect(alice.token);
   const bobPresence = waitForEvent(aliceSocket, "presence:changed", p => p.userId === bob.user.id && p.online);
   const bobSocket = await connect(bob.token);
+  const charlieSocket = await connect(charlie.token);
   await bobPresence;
   console.log("PASS sockets connected and friend presence syncs");
 
+  const createdGroup = await req("/api/groups", { method: "POST", token: alice.token, body: { name: "Smoke Test Squad", description: "Private group test", memberIds: [bob.user.id, charlie.user.id] } });
+  if (!createdGroup.group?.id || createdGroup.group.memberCount !== 3 || !createdGroup.group.isAdmin) throw new Error("group creation did not return expected members/admin");
+  const bobGroups = await req("/api/groups", { token: bob.token });
+  if (!bobGroups.groups.some(group => group.id === createdGroup.group.id)) throw new Error("group did not appear for invited friend");
+  const groupMessageForBob = waitForEvent(bobSocket, "group:message:new", message => message.groupId === createdGroup.group.id && message.body === "hello group");
+  const groupMessageForCharlie = waitForEvent(charlieSocket, "group:message:new", message => message.groupId === createdGroup.group.id && message.body === "hello group");
+  const groupAck = await new Promise(resolve => aliceSocket.emit("group:message:send", { groupId: createdGroup.group.id, body: "hello group" }, resolve));
+  if (groupAck?.error) throw new Error("group send ack error: " + groupAck.error);
+  await Promise.all([groupMessageForBob, groupMessageForCharlie]);
+  const groupHistory = await req("/api/groups/" + createdGroup.group.id + "/messages", { token: bob.token });
+  if (!groupHistory.messages.some(message => message.body === "hello group" && message.senderId === alice.user.id)) throw new Error("group message history did not persist");
+  console.log("PASS private group creation, membership, realtime delivery and history");
+
+  const outsider = await req("/api/auth/register", { method: "POST", body: { username: `outsider_${stamp}`, password: "password123" } });
+  const forbiddenGroup = await req("/api/groups", { token: outsider.token });
+  if (forbiddenGroup.groups.length !== 0) throw new Error("group leaked to non-members");
+  const outsiderSocket = await connect(outsider.token);
+  const outsiderGroupAck = await new Promise(resolve => outsiderSocket.emit("group:message:send", { groupId: createdGroup.group.id, body: "not allowed" }, resolve));
+  if (!outsiderGroupAck?.error) throw new Error("non-member was allowed to send a group message");
+  outsiderSocket.close();
+
   await req("/api/preferences", { method: "PATCH", token: alice.token, body: { privacy: { profileVisibility: "nobody" } } });
-  const privateDirectory = await req("/api/users", { token: bob.token });
-  const privateAlice = privateDirectory.users.find(u => u._id === alice.user.id);
+  const privateSearch = await req("/api/users/search?username=" + a, { token: bob.token });
+  const privateAlice = privateSearch.users.find(u => u.username === a);
   if (!privateAlice || privateAlice.displayName || privateAlice.avatarData) throw new Error("profile visibility setting was not enforced");
   await req("/api/preferences", { method: "PATCH", token: alice.token, body: { privacy: { profileVisibility: "contacts" } } });
   console.log("PASS profile visibility is enforced by the API");
@@ -170,8 +196,14 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
 
   aliceSocket.close();
   bobSocket.close();
+  charlieSocket.close();
 
   const charlie = await req("/api/auth/register", { method: "POST", body: { username: `charlie_${stamp}`, password: "password123" } });
+  await req("/api/friends/request", { method: "POST", token: alice.token, body: { username: charlie.user.username } });
+  const charlieRequests = await req("/api/friends", { token: charlie.token });
+  const charlieIncoming = charlieRequests.requests.find(r => r.senderId === alice.user.id && r.status === "pending");
+  if (!charlieIncoming) throw new Error("second friend request not visible");
+  await req("/api/friends/" + charlieIncoming.id, { method: "PATCH", token: charlie.token, body: { action: "accept" } });
   await req("/api/sessions/revoke-all", { method: "POST", token: charlie.token });
   const revokedCheck = await fetch(API + "/api/preferences", { headers: { Authorization: "Bearer " + charlie.token } });
   if (revokedCheck.status !== 401) throw new Error("revoked session token still works");
