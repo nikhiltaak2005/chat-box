@@ -113,6 +113,18 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   const groupHistory = await req("/api/groups/" + createdGroup.group.id + "/messages", { token: bob.token });
   if (!groupHistory.messages.some(message => message.body === "hello group" && message.senderId === alice.user.id)) throw new Error("group message history did not persist");
   console.log("PASS private group creation, membership, realtime delivery and history");
+  const groupReaction = waitForEvent(bobSocket, "group:message:reaction", payload => payload.messageId === groupAck.message._id && payload.reactions.some(item => item.userId === alice.user.id && item.emoji === "🎉"));
+  const groupReactionAck = await new Promise(resolve => aliceSocket.emit("group:message:reaction", { messageId: groupAck.message._id, emoji: "🎉" }, resolve));
+  if (groupReactionAck?.error) throw new Error(groupReactionAck.error);
+  await groupReaction;
+  console.log("PASS group message reactions sync");
+  const groupDeleteEvent = waitForEvent(bobSocket, "group:message:deleted", payload => payload.messageIds.includes(groupAck.message._id));
+  const groupDeleteAck = await new Promise(resolve => aliceSocket.emit("group:message:delete", { messageId: groupAck.message._id, scope: "everyone" }, resolve));
+  if (groupDeleteAck?.error) throw new Error(groupDeleteAck.error);
+  await groupDeleteEvent;
+  const afterGroupDelete = await req("/api/groups/" + createdGroup.group.id + "/messages", { token: bob.token });
+  if (afterGroupDelete.messages.some(message => message._id === groupAck.message._id)) throw new Error("group delete for everyone did not remove message");
+  console.log("PASS group message delete for everyone");
 
   const outsider = await req("/api/auth/register", { method: "POST", body: { username: `outsider_${stamp}`, password: "password123" } });
   const forbiddenGroup = await req("/api/groups", { token: outsider.token });
