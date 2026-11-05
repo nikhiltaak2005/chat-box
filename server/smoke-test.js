@@ -107,8 +107,10 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   const appConfig = await req("/api/app-config", { token: alice.token });
   if (typeof appConfig.maintenanceMode !== "boolean") throw new Error("app config endpoint did not return expected settings");
   console.log("PASS admin routes are role-protected and app config is readable");
-\n  const createdGroup = await req("/api/groups", { method: "POST", token: alice.token, body: { name: "Smoke Test Squad", description: "Private group test", memberIds: [bob.user.id, charlie.user.id] } });
-  if (!createdGroup.group?.id || createdGroup.group.memberCount !== 3 || !createdGroup.group.isAdmin) throw new Error("group creation did not return expected members/admin");\n
+
+  const createdGroup = await req("/api/groups", { method: "POST", token: alice.token, body: { name: "Smoke Test Squad", description: "Private group test", memberIds: [bob.user.id, charlie.user.id] } });
+  if (!createdGroup.group?.id || createdGroup.group.memberCount !== 3 || !createdGroup.group.isAdmin) throw new Error("group creation did not return expected members/admin");
+
   const submittedReport = await req("/api/reports", { method: "POST", token: bob.token, body: { targetType: "group", targetId: createdGroup.group.id, reason: "other", details: "Smoke test moderation report" } });
   if (!submittedReport.reportId) throw new Error("report submission did not return an id");
   const forbiddenReports = await fetch(API + "/api/admin/reports", { headers: { Authorization: "Bearer " + bob.token } });
@@ -245,9 +247,11 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   if (deletedCheck.status !== 401) throw new Error("deleted account token still works");
   console.log("PASS account deletion removes account access");
 
-  console.log("\nALL CHECKS PASSED");
+  console.log("
+ALL CHECKS PASSED");
   process.exit(0);
 })().catch((err) => {
-  console.error("\nSMOKE TEST FAILED:", err.message);
+  console.error("
+SMOKE TEST FAILED:", err.message);
   process.exit(1);
 });
