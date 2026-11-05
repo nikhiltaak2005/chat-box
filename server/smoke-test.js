@@ -105,6 +105,11 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   if (!createdGroup.group?.id || createdGroup.group.memberCount !== 3 || !createdGroup.group.isAdmin) throw new Error("group creation did not return expected members/admin");
   const bobGroups = await req("/api/groups", { token: bob.token });
   if (!bobGroups.groups.some(group => group.id === createdGroup.group.id)) throw new Error("group did not appear for invited friend");
+  await req("/api/groups/" + createdGroup.group.id + "/admins", { method: "PATCH", token: alice.token, body: { userId: bob.user.id, action: "promote" } });
+  const promotedGroups = await req("/api/groups", { token: bob.token });
+  if (!promotedGroups.groups.find(group => group.id === createdGroup.group.id)?.isAdmin) throw new Error("group admin promotion failed");
+  await req("/api/groups/" + createdGroup.group.id + "/admins", { method: "PATCH", token: alice.token, body: { userId: bob.user.id, action: "demote" } });
+  console.log("PASS group admin promotion and demotion");
   const groupMessageForBob = waitForEvent(bobSocket, "group:message:new", message => message.groupId === createdGroup.group.id && message.body === "hello group");
   const groupMessageForCharlie = waitForEvent(charlieSocket, "group:message:new", message => message.groupId === createdGroup.group.id && message.body === "hello group");
   const groupAck = await new Promise(resolve => aliceSocket.emit("group:message:send", { groupId: createdGroup.group.id, body: "hello group" }, resolve));
