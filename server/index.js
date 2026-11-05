@@ -94,6 +94,29 @@ const User = mongoose.model("User", userSchema);
 const Conversation = mongoose.model("Conversation", conversationSchema);
 const Message = mongoose.model("Message", messageSchema);
 
+const groupSchema = new Schema({
+  name: { type: String, required: true, trim: true, maxlength: 48 },
+  description: { type: String, trim: true, maxlength: 240, default: "" },
+  avatarData: { type: String, default: "", maxlength: 1000000 },
+  createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  admins: [{ type: Schema.Types.ObjectId, ref: "User" }],
+  members: [{ userId: { type: Schema.Types.ObjectId, ref: "User", required: true }, joinedAt: { type: Date, default: Date.now } }]
+}, { timestamps: true });
+groupSchema.index({ "members.userId": 1, updatedAt: -1 });
+const Group = mongoose.model("Group", groupSchema);
+
+const groupMessageSchema = new Schema({
+  groupId: { type: Schema.Types.ObjectId, ref: "Group", required: true, index: true },
+  senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  body: { type: String, trim: true, maxlength: 4000, default: "" },
+  contentType: { type: String, enum: ["text", "gif", "sticker"], default: "text" },
+  mediaUrl: { type: String, default: "", maxlength: 2000 },
+  mediaPreviewUrl: { type: String, default: "", maxlength: 2000 },
+  reactions: [{ userId: { type: Schema.Types.ObjectId, ref: "User", required: true }, emoji: { type: String, required: true, maxlength: 16 } }],
+  replyTo: { type: Schema.Types.ObjectId, ref: "GroupMessage", default: null }
+}, { timestamps: true });
+const GroupMessage = mongoose.model("GroupMessage", groupMessageSchema);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -403,7 +426,7 @@ app.get("/api/users/search", requireAuth, async (req, res, next) => {
   try {
     const username = String(req.query?.username || "").trim().toLowerCase();
     if (!/^[a-z0-9_]{3,24}$/.test(username)) return res.json({ users: [] });
-    const users = await User.find({ username: { $regex: "^" + username }, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt").limit(20);
+    const users = await User.find({ username, _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt").limit(1);
     return res.json({ users: users.map(publicContact) });
   } catch (err) { return next(err); }
 });
@@ -492,19 +515,6 @@ app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, re
 app.delete("/api/admin/storage/expired", requireAuth, requireAdmin, async (_req, res, next) => {
   try { const result = await Message.deleteMany({ deleteAt: { $ne: null, $lte: new Date() } }); return res.json({ ok: true, deletedMessages: result.deletedCount || 0 }); }
   catch (err) { return next(err); }
-});
-
-app.get("/api/users", requireAuth, async (req, res, next) => {
-  try {
-    // Keep the directory visible to signed-in users. Only accepted friends can open chats;
-    // the UI uses isFriend to offer a friend request for everyone else.
-    const accepted = await FriendRequest.find({ status: "accepted", $or: [{ senderId: req.userId }, { recipientId: req.userId }] }).select("senderId recipientId");
-    const acceptedIds = new Set(accepted.map(r => (r.senderId.toString() === req.userId ? r.recipientId : r.senderId).toString()));
-    const users = await User.find({ _id: { $ne: req.userId }, isDisabled: { $ne: true } }).select("username displayName avatarData preferences lastSeenAt").sort({ username: 1 }).limit(1000);
-    return res.json({ users: users.map(user => ({ ...publicContact(user, { isFriend: acceptedIds.has(user._id.toString()) }), isFriend: acceptedIds.has(user._id.toString()) })) });
-  } catch (err) {
-    return next(err);
-  }
 });
 
 const giphyCache = new Map();
@@ -649,6 +659,7 @@ io.use(async (socket, next) => {
 io.on("connection", (socket) => {
   // One room per user id so every open client/device receives live messages.
   socket.join(socket.userId);
+  Group.find({ "members.userId": socket.userId }).select("_id").then(groups => groups.forEach(group => socket.join("group:" + group._id.toString()))).catch(err => console.error("[groups] room join failed", err));
   publishUnreadCount(socket.userId).catch((err) => console.error("[socket] unread count failed", err));
 
   (async () => {
@@ -736,6 +747,47 @@ io.on("connection", (socket) => {
     } catch (err) {
       console.error("[socket] message:send failed", err);
       return respond({ error: "Could not send message." });
+    }
+  });
+
+
+  socket.on("group:message:send", async (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    try {
+      const groupId = payload?.groupId;
+      const contentType = ["text", "gif", "sticker"].includes(payload?.contentType) ? payload.contentType : "text";
+      const body = String(payload?.body || "").trim();
+      const mediaUrl = String(payload?.mediaUrl || "");
+      const mediaPreviewUrl = String(payload?.mediaPreviewUrl || "");
+      if (!isValidId(groupId)) return respond({ error: "Invalid group." });
+      if (contentType === "text" && !body) return respond({ error: "Message cannot be empty." });
+      if (body.length > (contentType === "text" ? 4000 : 500)) return respond({ error: "Message is too long." });
+      if (contentType !== "text") {
+        try {
+          const media = new URL(mediaUrl), preview = new URL(mediaPreviewUrl || mediaUrl);
+          const valid = url => url.protocol === "https:" && (url.hostname === "giphy.com" || url.hostname.endsWith(".giphy.com"));
+          if (!valid(media) || !valid(preview)) return respond({ error: "Only verified HTTPS GIPHY media can be sent." });
+        } catch { return respond({ error: "Invalid media URL." }); }
+      }
+      const group = await Group.findById(groupId);
+      if (!group || !isGroupMember(group, socket.userId)) return respond({ error: "You are no longer a member of this group." });
+      let replyTo = null;
+      if (payload?.replyTo) {
+        if (!isValidId(payload.replyTo)) return respond({ error: "Invalid reply target." });
+        const original = await GroupMessage.findOne({ _id: payload.replyTo, groupId });
+        if (!original) return respond({ error: "The message you are replying to no longer exists." });
+        replyTo = original._id;
+      }
+      const message = await GroupMessage.create({ groupId, senderId: socket.userId, body, contentType, mediaUrl: contentType === "text" ? "" : mediaUrl, mediaPreviewUrl: contentType === "text" ? "" : (mediaPreviewUrl || mediaUrl), replyTo });
+      const sender = await User.findById(socket.userId).select("username displayName avatarData");
+      const serialized = { _id: message._id.toString(), groupId: group._id.toString(), senderId: socket.userId, senderName: sender?.displayName || sender?.username || "Member", senderUsername: sender?.username || "", senderAvatar: sender?.avatarData || "", body: message.body, contentType: message.contentType, mediaUrl: message.mediaUrl, mediaPreviewUrl: message.mediaPreviewUrl, reactions: [], replyTo: message.replyTo?.toString() || null, createdAt: message.createdAt };
+      group.updatedAt = new Date();
+      await group.save();
+      io.to("group:" + group._id.toString()).emit("group:message:new", serialized);
+      return respond({ ok: true, message: serialized });
+    } catch (err) {
+      console.error("[socket] group:message:send failed", err);
+      return respond({ error: "Could not send group message." });
     }
   });
 
