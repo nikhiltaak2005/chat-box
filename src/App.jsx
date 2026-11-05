@@ -119,7 +119,9 @@ export default function App() {
     request("/api/preferences", token).then(data => setPreferences(data.preferences || DEFAULT_PREFERENCES)).catch(e => setError(e.message));
   }, [token, me]);
 
-  useEffect(() => { if (!token) { setGlobalConfig({ maintenanceMode:false, announcement:"", announcementEnabled:false }); return; } request("/api/app-config", token).then(setGlobalConfig).catch(() => {}); }, [token, me]);\n\n  async function toggleContactMute(personId) {
+  useEffect(() => { if (!token) { setGlobalConfig({ maintenanceMode:false, announcement:"", announcementEnabled:false }); return; } request("/api/app-config", token).then(setGlobalConfig).catch(() => {}); }, [token, me]);
+
+  async function toggleContactMute(personId) {
     const current = preferencesRef.current;
     const muted = new Set(current.notifications.mutedContacts || []);
     if (muted.has(personId)) muted.delete(personId); else muted.add(personId);
