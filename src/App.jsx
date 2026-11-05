@@ -249,8 +249,11 @@ export default function App() {
       setGroups(prev => prev.map(group => group.id === msg.groupId ? { ...group, lastMessage: { body: msg.body || (msg.contentType === "gif" ? "GIF" : "Sticker"), senderId: msg.senderId, createdAt: msg.createdAt } } : group));
     });
     socket.on("group:updated", payload => {
-      request("/api/groups", token).then(data => setGroups(data.groups || [])).catch(() => {});
-      if (payload?.groupId && activeRef.current?.isGroup && activeRef.current.id === payload.groupId) request("/api/groups/" + payload.groupId + "/messages", token).then(data => setMessages(data.messages || [])).catch(() => {});
+      request("/api/groups", token).then(data => {
+        setGroups(data.groups || []);
+        const fresh = (data.groups || []).find(group => group.id === payload?.groupId);
+        if (fresh && activeRef.current?.isGroup && activeRef.current.id === payload.groupId) setActive(prev => ({ ...prev, ...fresh, _id: fresh.id, conversationId: fresh.id, isGroup: true }));
+      }).catch(() => {});
     });
     socket.on("group:deleted", payload => {
       setGroups(prev => prev.filter(group => group.id !== payload?.groupId));
