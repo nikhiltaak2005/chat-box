@@ -248,6 +248,15 @@ export default function App() {
       if (msg.senderId !== me.id && (!visibleRef.current || activeRef.current?.id !== msg.groupId) && preferencesRef.current.notifications.enabled && !isQuietNow(preferencesRef.current.notifications)) window.desktop?.notifyIncoming("New message in a group", { sound: preferencesRef.current.notifications.sound });
       setGroups(prev => prev.map(group => group.id === msg.groupId ? { ...group, lastMessage: { body: msg.body || (msg.contentType === "gif" ? "GIF" : "Sticker"), senderId: msg.senderId, createdAt: msg.createdAt } } : group));
     });
+    socket.on("group:message:reaction", payload => {
+      if (activeRef.current?.isGroup && activeRef.current.id === payload?.groupId) setMessages(prev => prev.map(message => message._id === payload.messageId ? { ...message, reactions: payload.reactions || [] } : message));
+    });
+    socket.on("group:message:hidden", payload => {
+      if (activeRef.current?.isGroup && activeRef.current.id === payload?.groupId) { const ids = new Set(payload.messageIds || []); setMessages(prev => prev.filter(message => !ids.has(message._id))); }
+    });
+    socket.on("group:message:deleted", payload => {
+      if (activeRef.current?.isGroup && activeRef.current.id === payload?.groupId) { const ids = new Set(payload.messageIds || []); setMessages(prev => prev.filter(message => !ids.has(message._id))); }
+    });
     socket.on("group:updated", payload => {
       request("/api/groups", token).then(data => {
         setGroups(data.groups || []);
@@ -471,14 +480,13 @@ export default function App() {
   async function deleteMessage(message, scope) {
     if (!message?._id) return;
     if (scope === "everyone" && !window.confirm("Delete this message for everyone? This cannot be undone.")) return;
-    socketRef.current?.emit("message:delete", { messageId: message._id, scope }, result => {
+    socketRef.current?.emit(active?.isGroup ? "group:message:delete" : "message:delete", { messageId: message._id, scope }, result => {
       if (result?.error) setError(result.error);
     });
   }
 
   function toggleReaction(message, emoji) {
-    if (active?.isGroup) return;
-    socketRef.current?.emit("message:reaction", { messageId: message._id, emoji }, result => {
+    socketRef.current?.emit(active?.isGroup ? "group:message:reaction" : "message:reaction", { messageId: message._id, emoji }, result => {
       if (result?.error) setError(result.error);
     });
   }
@@ -545,7 +553,7 @@ export default function App() {
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{active.isGroup && m.senderId !== me.id && <div className="group-sender">{m.senderName || m.senderUsername || "Member"}</div>}{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.contentType==="gif" || m.contentType==="sticker" ? <div className={"media-message " + (m.contentType==="sticker" ? "sticker-message" : "")}><img src={m.mediaUrl} alt={m.contentType==="sticker" ? "Sticker" : "GIF"} loading="lazy"/>{m.body && <span>{m.body}</span>}</div> : m.body}</div>{!active.isGroup && preferences.chat.reactions && <div className="reaction-row">{(m.reactions || []).length>0 && Object.entries((m.reactions || []).reduce((groups,reaction)=>{groups[reaction.emoji]=(groups[reaction.emoji]||[]).concat(reaction);return groups;},{})).map(([emoji,items])=><button key={emoji} type="button" className={items.some(item=>item.userId===me.id)?"reaction-chip selected":"reaction-chip"} onClick={()=>toggleReaction(m,emoji)}>{emoji} {items.length}</button>)}{["👍","❤️","😂","😮","🔥"].map(emoji=><button key={emoji} type="button" className="quick-reaction" title={"React "+emoji} onClick={()=>toggleReaction(m,emoji)}>{emoji}</button>)}</div>}{!active.isGroup && <div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body || m.mediaUrl || "")}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div>}<time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{active.isGroup && m.senderId !== me.id && <div className="group-sender">{m.senderName || m.senderUsername || "Member"}</div>}{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.contentType==="gif" || m.contentType==="sticker" ? <div className={"media-message " + (m.contentType==="sticker" ? "sticker-message" : "")}><img src={m.mediaUrl} alt={m.contentType==="sticker" ? "Sticker" : "GIF"} loading="lazy"/>{m.body && <span>{m.body}</span>}</div> : m.body}</div>{preferences.chat.reactions && <div className="reaction-row">{(m.reactions || []).length>0 && Object.entries((m.reactions || []).reduce((groups,reaction)=>{groups[reaction.emoji]=(groups[reaction.emoji]||[]).concat(reaction);return groups;},{})).map(([emoji,items])=><button key={emoji} type="button" className={items.some(item=>item.userId===me.id)?"reaction-chip selected":"reaction-chip"} onClick={()=>toggleReaction(m,emoji)}>{emoji} {items.length}</button>)}{["👍","❤️","😂","😮","🔥"].map(emoji=><button key={emoji} type="button" className="quick-reaction" title={"React "+emoji} onClick={()=>toggleReaction(m,emoji)}>{emoji}</button>)}</div>}<div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body || m.mediaUrl || "")}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
