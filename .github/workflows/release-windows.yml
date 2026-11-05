@@ -1,10 +1,6 @@
 name: Build and publish Windows updater release
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/release-windows.yml"
   workflow_dispatch:
     inputs:
       version:
