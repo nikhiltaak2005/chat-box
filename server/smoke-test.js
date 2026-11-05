@@ -83,6 +83,13 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   await req("/api/friends/" + incoming.id, { method: "PATCH", token: bob.token, body: { action: "accept" } });
   console.log("PASS friend request and acceptance");
 
+  const charlie = await req("/api/auth/register", { method: "POST", body: { username: `charlie_${stamp}`, password: "password123" } });
+  await req("/api/friends/request", { method: "POST", token: alice.token, body: { username: charlie.user.username } });
+  const charlieRequests = await req("/api/friends", { token: charlie.token });
+  const charlieIncoming = charlieRequests.requests.find(r => r.senderId === alice.user.id && r.status === "pending");
+  if (!charlieIncoming) throw new Error("second friend request not visible");
+  await req("/api/friends/" + charlieIncoming.id, { method: "PATCH", token: charlie.token, body: { action: "accept" } });
+
   const conv = await req(`/api/conversations/${bob.user.id}`, { token: alice.token });
   if (!conv.conversation || !conv.conversation._id) throw new Error("no conversation id returned");
   console.log("PASS GET /api/conversations/:id ->", conv.conversation._id, "(messages:", conv.messages.length + ")");
@@ -198,12 +205,6 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   bobSocket.close();
   charlieSocket.close();
 
-  const charlie = await req("/api/auth/register", { method: "POST", body: { username: `charlie_${stamp}`, password: "password123" } });
-  await req("/api/friends/request", { method: "POST", token: alice.token, body: { username: charlie.user.username } });
-  const charlieRequests = await req("/api/friends", { token: charlie.token });
-  const charlieIncoming = charlieRequests.requests.find(r => r.senderId === alice.user.id && r.status === "pending");
-  if (!charlieIncoming) throw new Error("second friend request not visible");
-  await req("/api/friends/" + charlieIncoming.id, { method: "PATCH", token: charlie.token, body: { action: "accept" } });
   await req("/api/sessions/revoke-all", { method: "POST", token: charlie.token });
   const revokedCheck = await fetch(API + "/api/preferences", { headers: { Authorization: "Bearer " + charlie.token } });
   if (revokedCheck.status !== 401) throw new Error("revoked session token still works");
