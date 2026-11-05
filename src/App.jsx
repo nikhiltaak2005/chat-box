@@ -30,6 +30,16 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [query, setQuery] = useState("");
   const [contacts, setContacts] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [homeTab, setHomeTab] = useState("chats");
+  const [groupCreateOpen, setGroupCreateOpen] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
+  const [groupMembers, setGroupMembers] = useState([]);
+  const [groupAvatar, setGroupAvatar] = useState("");
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
+  const [groupMemberToAdd, setGroupMemberToAdd] = useState("");
+  const [groupBusy, setGroupBusy] = useState(false);
   const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
   const friendRequestsRef = useRef(friendRequests);
@@ -183,6 +193,8 @@ export default function App() {
       try {
         const friends = await request("/api/friends", token);
         const nextRequests = friends.requests || [];
+        const groupData = await request("/api/groups", token);
+        setGroups(groupData.groups || []);
         setContacts(nextRequests.filter(item => item.status === "accepted").map(item => ({ ...item.person, isFriend: true })));
         const existingIds = new Set(friendRequestsRef.current.map(request => request.id));
         const newIncoming = nextRequests.filter(request => request.status === "pending" && request.recipientId === me.id && !existingIds.has(request.id));
@@ -230,6 +242,19 @@ export default function App() {
     });
     socket.on("unread:count", count => {
       window.desktop?.setUnreadCount(count);
+    });
+    socket.on("group:message:new", msg => {
+      if (activeRef.current?.isGroup && activeRef.current.id === msg.groupId) setMessages(prev => prev.some(existing => existing._id === msg._id) ? prev : [...prev, msg]);
+      if (msg.senderId !== me.id && (!visibleRef.current || activeRef.current?.id !== msg.groupId) && preferencesRef.current.notifications.enabled && !isQuietNow(preferencesRef.current.notifications)) window.desktop?.notifyIncoming("New message in a group", { sound: preferencesRef.current.notifications.sound });
+      setGroups(prev => prev.map(group => group.id === msg.groupId ? { ...group, lastMessage: { body: msg.body || (msg.contentType === "gif" ? "GIF" : "Sticker"), senderId: msg.senderId, createdAt: msg.createdAt } } : group));
+    });
+    socket.on("group:updated", payload => {
+      request("/api/groups", token).then(data => setGroups(data.groups || [])).catch(() => {});
+      if (payload?.groupId && activeRef.current?.isGroup && activeRef.current.id === payload.groupId) request("/api/groups/" + payload.groupId + "/messages", token).then(data => setMessages(data.messages || [])).catch(() => {});
+    });
+    socket.on("group:deleted", payload => {
+      setGroups(prev => prev.filter(group => group.id !== payload?.groupId));
+      if (activeRef.current?.isGroup && activeRef.current.id === payload?.groupId) { setActive(null); setMessages([]); }
     });
     socket.on("message:new", msg => {
       const current = activeRef.current;
@@ -281,7 +306,7 @@ export default function App() {
   useEffect(() => {
     const conversationId = active?.conversationId;
     const socket = socketRef.current;
-    if (!token || !conversationId || !chatVisible || !socket?.connected) return;
+    if (!token || active?.isGroup || !conversationId || !chatVisible || !socket?.connected) return;
     const key = conversationId + ":" + messages.filter(message => message.senderId !== me?.id && !message.readAt).map(message => message._id).join(",");
     if (readRequestRef.current === key) return;
     readRequestRef.current = key;
@@ -385,6 +410,42 @@ export default function App() {
       setMessages(data.messages || []); setReplyTo(null);
     } catch (e) { setError(e.message); }
   }
+  async function refreshGroups() { const data = await request("/api/groups", token); setGroups(data.groups || []); }
+  async function openGroup(group) {
+    setError("");
+    try { const data = await request("/api/groups/" + group.id + "/messages", token); readRequestRef.current = ""; setActive({ ...group, _id: group.id, conversationId: group.id, isGroup: true, username: group.name, displayName: group.name }); setMessages(data.messages || []); setReplyTo(null); }
+    catch (e) { setError(e.message); }
+  }
+  function handleGroupAvatar(e) {
+    const file = e.target.files?.[0]; if (!file) return;
+    if (!file.type.startsWith("image/")) { setError("Choose an image file."); return; }
+    if (file.size > 700 * 1024) { setError("Group photo must be under 700 KB."); return; }
+    const reader = new FileReader(); reader.onload = () => setGroupAvatar(String(reader.result || "")); reader.onerror = () => setError("Could not read the group image."); reader.readAsDataURL(file);
+  }
+  async function createGroup(e) {
+    e.preventDefault(); if (groupMembers.length < 2) { setError("Choose at least two friends for your group."); return; }
+    setGroupBusy(true); setError("");
+    try { const data = await request("/api/groups", token, { method: "POST", body: JSON.stringify({ name: groupName, description: groupDescription, avatarData: groupAvatar, memberIds: groupMembers }) }); await refreshGroups(); setGroupCreateOpen(false); setHomeTab("groups"); setGroupName(""); setGroupDescription(""); setGroupMembers([]); setGroupAvatar(""); await openGroup(data.group); }
+    catch (e) { setError(e.message); } finally { setGroupBusy(false); }
+  }
+  async function saveGroupDetails(e) {
+    e.preventDefault(); if (!active?.isGroup || !active.isAdmin) return; setGroupBusy(true); setError("");
+    try { const data = await request("/api/groups/" + active.id, token, { method: "PATCH", body: JSON.stringify({ name: groupName || active.name, description: groupDescription, avatarData: groupAvatar || active.avatarData || "" }) }); await refreshGroups(); setActive(prev => ({ ...prev, ...data.group, _id: data.group.id, conversationId: data.group.id, isGroup: true, username: data.group.name, displayName: data.group.name })); setGroupSettingsOpen(false); }
+    catch (e) { setError(e.message); } finally { setGroupBusy(false); }
+  }
+  async function addGroupMember() {
+    if (!active?.isGroup || !groupMemberToAdd) return; setGroupBusy(true); setError("");
+    try { await request("/api/groups/" + active.id + "/members", token, { method: "POST", body: JSON.stringify({ userId: groupMemberToAdd }) }); setGroupMemberToAdd(""); await refreshGroups(); const fresh = (await request("/api/groups", token)).groups.find(group => group.id === active.id); if (fresh) setActive(prev => ({ ...prev, ...fresh, _id: fresh.id, conversationId: fresh.id, isGroup: true })); }
+    catch (e) { setError(e.message); } finally { setGroupBusy(false); }
+  }
+  async function removeGroupMember(userId) {
+    if (!active?.isGroup) return; const member = active.members?.find(item => item.id === userId);
+    if (!member || !window.confirm(userId === me.id ? "Leave this group?" : "Remove @" + member.username + " from this group?")) return;
+    setGroupBusy(true); setError("");
+    try { await request("/api/groups/" + active.id + "/members/" + userId, token, { method: "DELETE" }); if (userId === me.id) { setActive(null); setMessages([]); } await refreshGroups(); const fresh = (await request("/api/groups", token)).groups.find(group => group.id === active.id); if (fresh && userId !== me.id) setActive(prev => ({ ...prev, ...fresh, _id: fresh.id, conversationId: fresh.id, isGroup: true })); }
+    catch (e) { setError(e.message); } finally { setGroupBusy(false); }
+  }
+
   async function runUpdateAction() {
     if (!window.desktop) { setUpdateInfo({ status: "dev", message: "Updates are available in the installed Windows app." }); return; }
     setUpdateBusy(true);
@@ -413,6 +474,7 @@ export default function App() {
   }
 
   function toggleReaction(message, emoji) {
+    if (active?.isGroup) return;
     socketRef.current?.emit("message:reaction", { messageId: message._id, emoji }, result => {
       if (result?.error) setError(result.error);
     });
@@ -420,7 +482,7 @@ export default function App() {
 
   function sendMedia(media) {
     if (!active || !preferences.chat.mediaEnabled) return;
-    socketRef.current?.emit("message:send", {
+    socketRef.current?.emit(active.isGroup ? "group:message:send" : "message:send", active.isGroup ? { groupId: active.id, contentType: media.type, mediaUrl: media.mediaUrl, mediaPreviewUrl: media.previewUrl, body: "" } : {
       conversationId: active.conversationId,
       contentType: media.type,
       mediaUrl: media.mediaUrl,
@@ -438,7 +500,7 @@ export default function App() {
     if (!body || !active) return;
     const replyMessageId = replyTo?._id || null;
     setDraft(""); setReplyTo(null);
-    socketRef.current?.emit("message:send", { conversationId: active.conversationId, body, replyTo: replyMessageId }, result => {
+    socketRef.current?.emit(active.isGroup ? "group:message:send" : "message:send", active.isGroup ? { groupId: active.id, body, replyTo: replyMessageId } : { conversationId: active.conversationId, body, replyTo: replyMessageId }, result => {
       if (result?.error) { setError(result.error); setDraft(body); }
     });
   }
@@ -480,7 +542,7 @@ export default function App() {
         </div>
         <div className="messages">
           {messages.length===0 && <div className="empty-chat"><div className="empty-icon"><MessageCircle size={22}/></div><strong>Say hello 👋</strong><span>Your conversation starts here.</span></div>}
-          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.contentType==="gif" || m.contentType==="sticker" ? <div className={"media-message " + (m.contentType==="sticker" ? "sticker-message" : "")}><img src={m.mediaUrl} alt={m.contentType==="sticker" ? "Sticker" : "GIF"} loading="lazy"/>{m.body && <span>{m.body}</span>}</div> : m.body}</div>{preferences.chat.reactions && <div className="reaction-row">{(m.reactions || []).length>0 && Object.entries((m.reactions || []).reduce((groups,reaction)=>{groups[reaction.emoji]=(groups[reaction.emoji]||[]).concat(reaction);return groups;},{})).map(([emoji,items])=><button key={emoji} type="button" className={items.some(item=>item.userId===me.id)?"reaction-chip selected":"reaction-chip"} onClick={()=>toggleReaction(m,emoji)}>{emoji} {items.length}</button>)}{["👍","❤️","😂","😮","🔥"].map(emoji=><button key={emoji} type="button" className="quick-reaction" title={"React "+emoji} onClick={()=>toggleReaction(m,emoji)}>{emoji}</button>)}</div>}<div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body || m.mediaUrl || "")}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div><time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
+          {messages.map((m,i)=><div key={m._id || i} className={"message " + (m.senderId===me.id ? "mine" : "theirs")}><div className="bubble">{active.isGroup && m.senderId !== me.id && <div className="group-sender">{m.senderName || m.senderUsername || "Member"}</div>}{m.replyTo && <div className="quoted-message">{messages.find(original=>original._id===m.replyTo)?.body || "Original message unavailable"}</div>}{m.contentType==="gif" || m.contentType==="sticker" ? <div className={"media-message " + (m.contentType==="sticker" ? "sticker-message" : "")}><img src={m.mediaUrl} alt={m.contentType==="sticker" ? "Sticker" : "GIF"} loading="lazy"/>{m.body && <span>{m.body}</span>}</div> : m.body}</div>{!active.isGroup && preferences.chat.reactions && <div className="reaction-row">{(m.reactions || []).length>0 && Object.entries((m.reactions || []).reduce((groups,reaction)=>{groups[reaction.emoji]=(groups[reaction.emoji]||[]).concat(reaction);return groups;},{})).map(([emoji,items])=><button key={emoji} type="button" className={items.some(item=>item.userId===me.id)?"reaction-chip selected":"reaction-chip"} onClick={()=>toggleReaction(m,emoji)}>{emoji} {items.length}</button>)}{["👍","❤️","😂","😮","🔥"].map(emoji=><button key={emoji} type="button" className="quick-reaction" title={"React "+emoji} onClick={()=>toggleReaction(m,emoji)}>{emoji}</button>)}</div>}{!active.isGroup && <div className="message-actions"><button type="button" title="Reply" onClick={()=>setReplyTo(m)}><Reply size={12}/></button><button type="button" title="Copy" onClick={()=>navigator.clipboard?.writeText(m.body || m.mediaUrl || "")}><Copy size={12}/></button><button type="button" title="Delete for me" onClick={()=>deleteMessage(m,"me")}><Trash2 size={12}/></button>{m.senderId===me.id && <button type="button" title="Delete for everyone" onClick={()=>deleteMessage(m,"everyone")}><X size={12}/></button>}</div>}<time>{new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}{m.senderId===me.id && m.readAt ? " · Seen" : ""}</time></div>)}
           <div ref={bottomRef}/>
         </div>
         {error && <div className="inline-error">{error}<button onClick={()=>setError("")}>×</button></div>}
