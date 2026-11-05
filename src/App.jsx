@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 import EmojiPicker from "emoji-picker-react";
 import MediaPicker from "./MediaPicker.jsx";
 import SettingsCenter, { DEFAULT_DEVICE_PREFERENCES, DEFAULT_PREFERENCES } from "./SettingsCenter.jsx";
-import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon, LockKeyhole, Bell, BellOff } from "lucide-react";
+import { MessageCircle, Minus, X, Send, Search, Plus, LogOut, Pin, UserRound, ArrowLeft, Circle, Camera, Reply, Copy, UserCog, Settings, Download, RefreshCw, CheckCircle2, Trash2, Image as ImageIcon, LockKeyhole, Bell, BellOff, ShieldCheck, LayoutDashboard, Users, Flag, Layers, ScrollText, Megaphone, Activity, Ban, UserCheck } from "lucide-react";
 
 const DEFAULT_SERVER = import.meta.env.DEV ? "http://localhost:4000" : "https://chat-box-ryz8.onrender.com";
 const API = (import.meta.env.VITE_API_URL || DEFAULT_SERVER).replace(/\/$/, "");
@@ -49,6 +49,14 @@ export default function App() {
   const [mediaOpen, setMediaOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminUsers, setAdminUsers] = useState([]);
+  const [adminTab, setAdminTab] = useState("overview");
+  const [adminStats, setAdminStats] = useState({});
+  const [adminGroups, setAdminGroups] = useState([]);
+  const [adminReports, setAdminReports] = useState([]);
+  const [adminLogs, setAdminLogs] = useState([]);
+  const [adminSearch, setAdminSearch] = useState("");
+  const [adminConfig, setAdminConfig] = useState({ maintenanceMode:false, announcement:"", announcementEnabled:false, minimumVersion:"0.3.0" });
+  const [adminBusy, setAdminBusy] = useState(false);
   const [active, setActive] = useState(null);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
@@ -327,20 +335,24 @@ export default function App() {
     });
   }, [token, me, active?.conversationId, chatVisible, messages, status]);
 
-  async function openAdmin() {
-    setError("");
-    try { const data = await request("/api/admin/users", token); setAdminUsers(data.users || []); setAdminOpen(true); }
-    catch (e) { setError(e.message); }
+  async function loadAdminData(tab = adminTab) {
+    setAdminBusy(true);
+    try {
+      const [overview, users] = await Promise.all([request("/api/admin/overview", token), request("/api/admin/users?search="+encodeURIComponent(adminSearch), token)]);
+      setAdminStats(overview.stats||{}); setAdminConfig(overview.config||adminConfig); setAdminUsers(users.users||[]);
+      if(tab==="overview"||tab==="groups") setAdminGroups((await request("/api/admin/groups",token)).groups||[]);
+      if(tab==="overview"||tab==="reports") setAdminReports((await request("/api/admin/reports",token)).reports||[]);
+      if(tab==="audit") setAdminLogs((await request("/api/admin/audit",token)).logs||[]);
+    } catch(e){setError(e.message);} finally{setAdminBusy(false);}
   }
-  async function adminDeleteUser(id, username) {
-    if (!window.confirm("Permanently delete " + username + " and their conversations?")) return;
-    try { await request("/api/admin/users/" + id, token, { method: "DELETE" }); setAdminUsers(prev => prev.filter(u => u.id !== id)); }
-    catch (e) { setError(e.message); }
-  }
-  async function adminDisableUser(id, isDisabled) {
-    try { await request("/api/admin/users/" + id, token, { method: "PATCH", body: JSON.stringify({ isDisabled: !isDisabled }) }); setAdminUsers(prev => prev.map(u => u.id === id ? { ...u, isDisabled: !isDisabled } : u)); }
-    catch (e) { setError(e.message); }
-  }
+  async function openAdmin(){setError("");try{await request("/api/admin/overview",token);setAdminOpen(true);setAdminTab("overview");await loadAdminData("overview");}catch(e){setError(e.message);}}
+  async function adminDeleteUser(id,username){if(!window.confirm("Permanently delete "+username+" and their data? This cannot be undone."))return;try{await request("/api/admin/users/"+id,token,{method:"DELETE"});await loadAdminData(adminTab);}catch(e){setError(e.message);}}
+  async function adminDisableUser(id,isDisabled){try{await request("/api/admin/users/"+id,token,{method:"PATCH",body:JSON.stringify({isDisabled:!isDisabled})});await loadAdminData(adminTab);}catch(e){setError(e.message);}}
+  async function adminSetRole(id,role){try{await request("/api/admin/users/"+id,token,{method:"PATCH",body:JSON.stringify({role})});await loadAdminData(adminTab);}catch(e){setError(e.message);}}
+  async function adminDeleteGroup(group){if(!window.confirm("Delete "+group.name+" and all its messages?"))return;try{await request("/api/admin/groups/"+group.id,token,{method:"DELETE"});await loadAdminData("groups");}catch(e){setError(e.message);}}
+  async function adminUpdateReport(report,status){try{await request("/api/admin/reports/"+report.id,token,{method:"PATCH",body:JSON.stringify({status,moderatorNote:report.moderatorNote||""})});await loadAdminData("reports");}catch(e){setError(e.message);}}
+  async function adminSaveConfig(e){e.preventDefault();try{const d=await request("/api/admin/config",token,{method:"PATCH",body:JSON.stringify(adminConfig)});setAdminConfig(d.config);setError("Admin settings saved.");await loadAdminData(adminTab);}catch(e){setError(e.message);}}
+
 
   async function requestFriendForPerson(targetUsername) {
     setError("");
@@ -595,8 +607,21 @@ export default function App() {
         <div className="footer-note"><Circle size={7} fill="currentColor"/> PRIVATE SPACE · REAL-TIME CHAT</div>
       </section>}
     </>}
-    {adminOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAdminOpen(false);}}><section className="profile-dialog admin-dialog"><div className="profile-heading"><div><p className="eyebrow">OWNER CONTROLS</p><h2>User management</h2></div><button type="button" className="icon-btn" onClick={()=>setAdminOpen(false)}><X size={17}/></button></div><p className="muted">Disable an account to block access, or permanently delete its account, messages, conversations and friend requests.</p><div className="admin-user-list">{adminUsers.map(u=><div className="admin-user" key={u.id}><div className="contact-meta"><strong>{u.displayName||u.username} {u.role==="admin"?"· ADMIN":""}</strong><small>@{u.username} · {u.isDisabled?"Disabled":"Active"}</small></div>{u.role!=="admin" && <><button className="icon-btn" title={u.isDisabled?"Enable":"Disable"} onClick={()=>adminDisableUser(u.id,u.isDisabled)}>{u.isDisabled?"✓":"⏸"}</button><button className="icon-btn" title="Delete user and chats" onClick={()=>adminDeleteUser(u.id,u.username)}>🗑</button></>}</div>)}</div><div className="profile-actions"><button type="button" className="text-btn" onClick={()=>request("/api/admin/storage/expired",token,{method:"DELETE"}).then(d=>setError("Expired messages cleaned: "+d.deletedMessages)).catch(e=>setError(e.message))}>Clean expired messages</button><button type="button" className="primary-btn" onClick={()=>setAdminOpen(false)}>Done</button></div></section></div>}
-
+    {adminOpen && <div className="profile-overlay admin-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAdminOpen(false);}}>
+      <section className="profile-dialog admin-dashboard">
+        <header className="admin-topbar"><div className="admin-brand"><span><ShieldCheck size={21}/></span><div><p className="eyebrow">POCKETCHAT CONTROL CENTER</p><h2>Admin dashboard</h2></div></div><div className="admin-top-actions"><span className="admin-secure"><Activity size={12}/> Server-verified admin</span><button className="icon-btn" onClick={()=>loadAdminData(adminTab)} title="Refresh"><RefreshCw size={15}/></button><button className="icon-btn" onClick={()=>setAdminOpen(false)}><X size={17}/></button></div></header>
+        <div className="admin-dashboard-layout"><nav className="admin-sidebar">
+          {[["overview","Overview",LayoutDashboard],["users","Users",Users],["groups","Groups",Layers],["reports","Reports",Flag],["settings","App controls",Megaphone],["audit","Audit log",ScrollText]].map(([id,label,Icon])=><button key={id} className={adminTab===id?"active":""} onClick={()=>{setAdminTab(id);loadAdminData(id);}}><Icon size={15}/>{label}{id==="reports"&&adminStats.pendingReports>0?<b>{adminStats.pendingReports}</b>:null}</button>)}
+          <small><ShieldCheck size={13}/> Permission checked by API</small>
+        </nav><main className="admin-main">{adminBusy&&<div className="admin-loading"><RefreshCw size={14} className="spin-icon"/> Loading latest data…</div>}
+          {adminTab==="overview"&&<div className="admin-page"><div className="admin-page-heading"><div><p className="eyebrow">LIVE PLATFORM SNAPSHOT</p><h3>Welcome back, admin.</h3><p>Monitor PocketChat and keep the community safe.</p></div><span className="admin-version">v0.3.0</span></div><div className="admin-stat-grid">{[["Total users",adminStats.totalUsers,Users],["Active today",adminStats.activeUsers,Activity],["Groups",adminStats.totalGroups,Layers],["Messages",adminStats.totalMessages,MessageCircle],["Open reports",adminStats.pendingReports,Flag],["New today",adminStats.newUsersToday,UserCheck]].map(([label,value,Icon])=><div className="admin-stat-card" key={label}><span><Icon size={15}/>{label}</span><strong>{Number(value||0).toLocaleString()}</strong></div>)}</div><div className="admin-quick-grid"><button onClick={()=>{setAdminTab("users");loadAdminData("users");}}><Users/><strong>Manage users</strong><small>Roles and account access</small></button><button onClick={()=>{setAdminTab("reports");loadAdminData("reports");}}><Flag/><strong>Review reports</strong><small>{adminStats.pendingReports||0} open reports</small></button><button onClick={()=>setAdminTab("settings")}><Megaphone/><strong>App controls</strong><small>Announcements and maintenance</small></button></div><div className="admin-health-row"><span><i/> API connected</span><span>Admin role verified server-side</span></div></div>}
+          {adminTab==="users"&&<div className="admin-page"><div className="admin-page-heading"><div><p className="eyebrow">ACCOUNT DIRECTORY</p><h3>User management</h3><p>Search accounts, manage roles and control access.</p></div></div><form className="admin-search" onSubmit={e=>{e.preventDefault();loadAdminData("users");}}><Search size={15}/><input value={adminSearch} onChange={e=>setAdminSearch(e.target.value)} placeholder="Search username or display name…"/><button className="primary-btn">Search</button></form><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>ACCOUNT</th><th>ROLE</th><th>STATUS</th><th>JOINED</th><th>ACTIONS</th></tr></thead><tbody>{adminUsers.map(u=><tr key={u.id}><td><strong>{u.displayName||u.username}</strong><small>@{u.username}</small></td><td><span className={u.role==="admin"?"admin-role-pill":"admin-user-pill"}>{u.role}</span></td><td><span className={u.isDisabled?"admin-status-off":"admin-status-on"}>{u.isDisabled?"Suspended":"Active"}</span></td><td>{u.createdAt?new Date(u.createdAt).toLocaleDateString():"—"}</td><td><div className="admin-row-actions"><button title={u.isDisabled?"Reactivate":"Suspend"} onClick={()=>adminDisableUser(u.id,u.isDisabled)}>{u.isDisabled?<UserCheck size={14}/>:<Ban size={14}/>}</button>{u.id!==me.id&&<button title={u.role==="admin"?"Remove admin":"Promote to admin"} onClick={()=>adminSetRole(u.id,u.role==="admin"?"user":"admin")}><ShieldCheck size={14}/></button>}{u.id!==me.id&&<button className="danger" title="Delete user" onClick={()=>adminDeleteUser(u.id,u.username)}><Trash2 size={14}/></button>}</div></td></tr>)}</tbody></table>{!adminUsers.length&&<div className="admin-empty">No matching accounts found.</div>}</div></div>}
+          {adminTab==="groups"&&<div className="admin-page"><div className="admin-page-heading"><div><p className="eyebrow">COMMUNITY SPACES</p><h3>Group management</h3><p>Review groups and remove harmful spaces.</p></div><span className="admin-count">{adminGroups.length} groups</span></div><div className="admin-card-list">{adminGroups.map(g=><div className="admin-list-card" key={g.id}><div className="admin-list-icon"><Layers size={17}/></div><div className="contact-meta"><strong>{g.name}</strong><small>{g.memberCount} members · Owner @{g.createdBy} · {new Date(g.createdAt).toLocaleDateString()}</small></div><button className="admin-icon-danger" onClick={()=>adminDeleteGroup(g)} title="Delete group"><Trash2 size={15}/></button></div>)}{!adminGroups.length&&<div className="admin-empty">No groups found.</div>}</div></div>}
+          {adminTab==="reports"&&<div className="admin-page"><div className="admin-page-heading"><div><p className="eyebrow">TRUST & SAFETY</p><h3>Reports queue</h3><p>Review reports submitted by users.</p></div><span className="admin-count">{adminReports.length} reports</span></div><div className="admin-card-list">{adminReports.map(r=><article className="admin-report-card" key={r.id}><div className="admin-report-head"><strong>{r.targetType} · {r.reason}</strong><span className={"admin-report-status "+r.status}>{r.status}</span></div><p>{r.details||"No additional details supplied."}</p><small>By @{r.reporter} · {new Date(r.createdAt).toLocaleString()} · Target {r.targetId.slice(0,12)}…</small><select className="setting-select" value={r.status} onChange={e=>adminUpdateReport(r,e.target.value)}><option value="pending">Pending</option><option value="reviewing">Reviewing</option><option value="resolved">Resolved</option><option value="dismissed">Dismissed</option></select></article>)}{!adminReports.length&&<div className="admin-empty">No reports yet. The queue is clear.</div>}</div></div>}
+          {adminTab==="settings"&&<form className="admin-page admin-settings-form" onSubmit={adminSaveConfig}><div className="admin-page-heading"><div><p className="eyebrow">GLOBAL CONFIGURATION</p><h3>App controls</h3><p>Manage announcements and release requirements.</p></div></div><label className="admin-config-toggle"><span><strong>Maintenance mode</strong><small>Maintenance status for admin visibility; this does not automatically block API access.</small></span><input type="checkbox" checked={!!adminConfig.maintenanceMode} onChange={e=>setAdminConfig(v=>({...v,maintenanceMode:e.target.checked}))}/></label><label className="admin-config-toggle"><span><strong>Announcement banner</strong><small>Enable a global announcement for signed-in users.</small></span><input type="checkbox" checked={!!adminConfig.announcementEnabled} onChange={e=>setAdminConfig(v=>({...v,announcementEnabled:e.target.checked}))}/></label><label className="admin-field">Announcement message<textarea value={adminConfig.announcement||""} onChange={e=>setAdminConfig(v=>({...v,announcement:e.target.value}))} maxLength={300} placeholder="Share an update…"/></label><label className="admin-field">Minimum app version<input value={adminConfig.minimumVersion||""} onChange={e=>setAdminConfig(v=>({...v,minimumVersion:e.target.value}))} placeholder="0.3.0" pattern="\d+\.\d+\.\d+"/><small>Format: 0.3.0</small></label><button className="primary-btn admin-save-btn">Save app settings</button></form>}
+          {adminTab==="audit"&&<div className="admin-page"><div className="admin-page-heading"><div><p className="eyebrow">ACCOUNTABILITY</p><h3>Admin audit log</h3><p>Recent administrative changes.</p></div></div><div className="admin-card-list">{adminLogs.map(log=><div className="admin-list-card" key={log.id}><div className="admin-list-icon"><ScrollText size={16}/></div><div className="contact-meta"><strong>{log.action}</strong><small>@{log.actor} · {log.targetType} · {log.details}</small></div><time>{new Date(log.createdAt).toLocaleString()}</time></div>)}{!adminLogs.length&&<div className="admin-empty">No admin events logged yet.</div>}</div></div>}
+        </main></div><footer className="admin-footer"><span>POCKETCHAT · ADMIN CONSOLE</span><span>Admin actions are audited</span><button className="primary-btn" onClick={()=>setAdminOpen(false)}>Close dashboard</button></footer>
+      </section></div>}
     {groupCreateOpen && <div className="profile-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setGroupCreateOpen(false);}}><form className="profile-dialog group-dialog" onSubmit={createGroup}>
       <div className="profile-heading"><div><p className="eyebrow">NEW PRIVATE SPACE</p><h2>Create a group</h2></div><button type="button" className="icon-btn" onClick={()=>setGroupCreateOpen(false)}><X size={17}/></button></div>
       <label className="group-photo-picker">{groupAvatar ? <img src={groupAvatar} alt="Group preview"/> : <UserRound size={26}/>}<span><Camera size={12}/> Add group photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleGroupAvatar}/></span></label>
