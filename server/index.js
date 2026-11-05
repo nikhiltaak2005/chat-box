@@ -445,6 +445,19 @@ app.patch("/api/friends/:requestId", requireAuth, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+app.delete("/api/friends/:requestId", requireAuth, async (req, res, next) => {
+  try {
+    const friendship = await FriendRequest.findOne({
+      _id: req.params.requestId,
+      status: "accepted",
+      $or: [{ senderId: req.userId }, { recipientId: req.userId }]
+    });
+    if (!friendship) return res.status(404).json({ error: "Accepted friendship not found." });
+    await friendship.deleteOne();
+    return res.json({ ok: true, message: "Friend removed." });
+  } catch (err) { return next(err); }
+});
+
 app.get("/api/admin/users", requireAuth, requireAdmin, async (_req, res, next) => {
   try { const users = await User.find().select("username displayName role isDisabled createdAt").sort({ createdAt: -1 }).limit(1000); return res.json({ users: users.map(u => ({ id: u._id.toString(), username: u.username, displayName: u.displayName, role: u.role, isDisabled: u.isDisabled, createdAt: u.createdAt })) }); }
   catch (err) { return next(err); }
