@@ -247,11 +247,9 @@ function waitForEvent(socket, event, predicate = () => true, ms = 7000) {
   if (deletedCheck.status !== 401) throw new Error("deleted account token still works");
   console.log("PASS account deletion removes account access");
 
-  console.log("
-ALL CHECKS PASSED");
+  console.log("\\nALL CHECKS PASSED");
   process.exit(0);
 })().catch((err) => {
-  console.error("
-SMOKE TEST FAILED:", err.message);
+  console.error("\\nSMOKE TEST FAILED:", err.message);
   process.exit(1);
 });
