@@ -73,4 +73,19 @@ The installer is output to `release/`.
 The GitHub Actions validation workflow builds the React UI, checks backend/Electron syntax, and runs backend smoke tests covering account privacy, friend requests, direct messages, group membership, group realtime messaging, reactions, and deletion.
 
 ## Security scope
-Group and direct chats are authenticated and membership-checked, but this release is not end-to-end encrypted. Other production-hardening work such as password reset, email/phone verification, and comprehensive rate limiting remains future work. Do not use this MVP for highly sensitive conversations until it has received an independent security review.
+Group and direct chats are authenticated and membership-checked, but this release is not end-to-end encrypted. Other production-hardening work such as password reset, email/phone verification, and comprehensive rate limiting remains future work. Do not use this MVP for highly sensitive conversations until it has received an independent security review.\n\n
+## Admin console (v0.3.x)
+
+PocketChat includes a role-protected admin dashboard. Admins are provisioned through the backend's `ADMIN_USERNAME` and `ADMIN_PASSWORD` bootstrap environment variables (the matching account is promoted on successful login). Keep these secrets private and use a strong unique password.
+
+The dashboard includes:
+- Platform overview metrics (users, active today, groups, messages, reports and new registrations).
+- User search, suspend/reactivate, promote/demote admin, and permanent account deletion.
+- Group directory and group deletion.
+- User-submitted reports for accounts and groups, with pending/reviewing/resolved/dismissed moderation states.
+- Global announcement banner and maintenance status controls.
+- Admin audit history for administrative changes.
+
+Admin endpoints are checked server-side. Regular users cannot access the dashboard APIs. Disabling an account revokes its current token version and disconnects active sockets. At least one active admin must remain. Admins should use the audit log for accountability.
+
+**Important:** Maintenance mode currently displays a status notice; it does not automatically block API traffic. Minimum app version is stored as release policy metadata and is not yet enforced by the client. Reports are user-submitted moderation signals and do not automatically inspect private message contents.
