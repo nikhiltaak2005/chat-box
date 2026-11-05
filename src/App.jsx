@@ -450,6 +450,17 @@ export default function App() {
     try { await request("/api/groups/" + active.id + "/members", token, { method: "POST", body: JSON.stringify({ userId: groupMemberToAdd }) }); setGroupMemberToAdd(""); await refreshGroups(); const fresh = (await request("/api/groups", token)).groups.find(group => group.id === active.id); if (fresh) setActive(prev => ({ ...prev, ...fresh, _id: fresh.id, conversationId: fresh.id, isGroup: true })); }
     catch (e) { setError(e.message); } finally { setGroupBusy(false); }
   }
+
+  async function toggleGroupAdmin(member) {
+    if (!active?.isGroup || !active.isAdmin || !member) return;
+    setGroupBusy(true); setError("");
+    try {
+      await request("/api/groups/" + active.id + "/admins", token, { method: "PATCH", body: JSON.stringify({ userId: member.id, action: member.isAdmin ? "demote" : "promote" }) });
+      await refreshGroups();
+      const fresh = (await request("/api/groups", token)).groups.find(group => group.id === active.id);
+      if (fresh) setActive(prev => ({ ...prev, ...fresh, _id: fresh.id, conversationId: fresh.id, isGroup: true }));
+    } catch (e) { setError(e.message); } finally { setGroupBusy(false); }
+  }
   async function removeGroupMember(userId) {
     if (!active?.isGroup) return; const member = active.members?.find(item => item.id === userId);
     if (!member || !window.confirm(userId === me.id ? "Leave this group?" : "Remove @" + member.username + " from this group?")) return;
@@ -599,7 +610,7 @@ export default function App() {
       <div className="profile-heading"><div><p className="eyebrow">GROUP DETAILS</p><h2>Group settings</h2></div><button type="button" className="icon-btn" onClick={()=>setGroupSettingsOpen(false)}><X size={17}/></button></div>
       {active.isAdmin ? <form className="group-edit-form" onSubmit={saveGroupDetails}><label>Group name<input value={groupName} onChange={e=>setGroupName(e.target.value)} maxLength={48} minLength={2} required/></label><label>Description<input value={groupDescription} onChange={e=>setGroupDescription(e.target.value)} maxLength={240}/></label><label className="group-photo-inline">Change group photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleGroupAvatar}/></label><button className="primary-btn" disabled={groupBusy}>Save details</button></form> : <p className="muted">{active.description || "A private group for your friends."}</p>}
       <div className="group-picker-label">MEMBERS <small>{active.members?.length || active.memberCount || 0} people</small></div>
-      <div className="group-member-list">{(active.members || []).map(member=><div className="group-member-row" key={member.id}><div className="avatar">{member.avatarData?<img src={member.avatarData} alt=""/>:(member.displayName||member.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{member.displayName||member.username}</strong><small>@{member.username}{member.isAdmin?" · Admin":""}</small></div>{active.isAdmin && member.id!==active.createdBy && <button className="icon-btn" title="Remove member" onClick={()=>removeGroupMember(member.id)}><Trash2 size={14}/></button>}</div>)}</div>
+      <div className="group-member-list">{(active.members || []).map(member=><div className="group-member-row" key={member.id}><div className="avatar">{member.avatarData?<img src={member.avatarData} alt=""/>:(member.displayName||member.username).slice(0,1).toUpperCase()}</div><div className="contact-meta"><strong>{member.displayName||member.username}</strong><small>@{member.username}{member.isAdmin?" · Admin":""}</small></div>{active.isAdmin && member.id!==active.createdBy && <><button type="button" className="group-role-btn" onClick={()=>toggleGroupAdmin(member)}>{member.isAdmin ? "Admin" : "Make admin"}</button><button type="button" className="icon-btn" title="Remove member" onClick={()=>removeGroupMember(member.id)}><Trash2 size={14}/></button></>}</div>)}</div>
       {active.isAdmin && <div className="group-add-row"><select className="setting-select" value={groupMemberToAdd} onChange={e=>setGroupMemberToAdd(e.target.value)}><option value="">Add a friend…</option>{contacts.filter(person=>!(active.members||[]).some(member=>member.id===person._id)).map(person=><option key={person._id} value={person._id}>@{person.username}</option>)}</select><button className="primary-btn" disabled={!groupMemberToAdd||groupBusy} onClick={addGroupMember}>Add</button></div>}
       {active.createdBy === me.id && (active.members?.length || 0) > 1 && <p className="muted group-owner-note">As the group creator, you can leave after transferring ownership or removing the other members.</p>}
       <button className="danger-btn settings-action" disabled={groupBusy || (active.createdBy === me.id && (active.members?.length || 0) > 1)} onClick={()=>removeGroupMember(me.id)}>Leave group</button>
