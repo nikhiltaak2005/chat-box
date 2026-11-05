@@ -338,3 +338,9 @@
 .app-shell.theme-light .group-friend-option{background:#fff;color:#20212a}
 .app-shell.theme-light .group-list-heading small{color:#656672}
 @media(max-width:480px){.home-tabs button{font-size:10px;gap:4px;padding:9px 3px}.group-list-heading strong{font-size:14px}.group-list-heading .primary-btn{padding:8px}.group-dialog{max-height:94vh}}
+
+.group-role-btn{flex-shrink:0;border:1px solid #574138;border-radius:7px;background:#302520;color:#ffb18f;padding:5px 7px;font-size:9px;font-weight:600}
+.group-role-btn:hover{background:#443027}
+.group-owner-note{margin:0!important;padding:8px 10px;border:1px solid #4b3b32;border-radius:8px;background:#28221f;font-size:10px}
+.app-shell.theme-light .group-role-btn{background:#fff1e9;border-color:#f0c8b2;color:#8a4326}
+.app-shell.theme-light .group-owner-note{background:#fff7f1;border-color:#ead8cc;color:#765744}
