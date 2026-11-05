@@ -73,7 +73,9 @@ The installer is output to `release/`.
 The GitHub Actions validation workflow builds the React UI, checks backend/Electron syntax, and runs backend smoke tests covering account privacy, friend requests, direct messages, group membership, group realtime messaging, reactions, and deletion.
 
 ## Security scope
-Group and direct chats are authenticated and membership-checked, but this release is not end-to-end encrypted. Other production-hardening work such as password reset, email/phone verification, and comprehensive rate limiting remains future work. Do not use this MVP for highly sensitive conversations until it has received an independent security review.\n\n
+Group and direct chats are authenticated and membership-checked, but this release is not end-to-end encrypted. Other production-hardening work such as password reset, email/phone verification, and comprehensive rate limiting remains future work. Do not use this MVP for highly sensitive conversations until it has received an independent security review.
+
+
 ## Admin console (v0.3.x)
 
 PocketChat includes a role-protected admin dashboard. Admins are provisioned through the backend's `ADMIN_USERNAME` and `ADMIN_PASSWORD` bootstrap environment variables (the matching account is promoted on successful login). Keep these secrets private and use a strong unique password.
