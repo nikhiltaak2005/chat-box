@@ -57,6 +57,7 @@ export default function App() {
   const [adminSearch, setAdminSearch] = useState("");
   const [adminConfig, setAdminConfig] = useState({ maintenanceMode:false, announcement:"", announcementEnabled:false, minimumVersion:"0.3.0" });
   const [adminBusy, setAdminBusy] = useState(false);
+  const [globalConfig, setGlobalConfig] = useState({ maintenanceMode:false, announcement:"", announcementEnabled:false });
   const [active, setActive] = useState(null);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
