@@ -6,6 +6,7 @@ let chatWindow;
 let petWindow;
 let unreadCount = 0;
 let petSettings = { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true };
+let chatAlwaysOnTop = false;
 let isQuitting = false;
 let updateState = { status: "idle", version: "", percent: 0, message: "Check for updates" };
 
@@ -47,6 +48,7 @@ function showChat() {
   if (!chatWindow || chatWindow.isDestroyed()) createChatWindow();
   if (!chatWindow) return;
   petWindow?.hide();
+  chatWindow.setAlwaysOnTop(chatAlwaysOnTop);
   chatWindow.show();
   chatWindow.focus();
   sendChatVisibility(true);
@@ -76,7 +78,7 @@ function createPetWindow() {
 function createChatWindow() {
   chatWindow = new BrowserWindow({
     width: 380, height: 610, minWidth: 320, minHeight: 420,
-    frame: false, transparent: false, alwaysOnTop: true, resizable: true,
+    frame: false, transparent: false, alwaysOnTop: chatAlwaysOnTop, resizable: true,
     maximizable: false, autoHideMenuBar: true, backgroundColor: "#111318",
     title: "PocketChat", show: false,
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true }
@@ -85,8 +87,8 @@ function createChatWindow() {
   else chatWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 
   chatWindow.on("blur", () => {
-    // Clicking anywhere outside the chat returns the user to the floating pet.
-    if (!isQuitting) hideChat();
+    // An unpinned chat returns to the floating pet when focus moves elsewhere.
+    if (!isQuitting && !chatAlwaysOnTop) hideChat();
   });
   chatWindow.on("close", (event) => {
     if (!isQuitting) {
@@ -110,7 +112,10 @@ app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(
 ipcMain.on("window:minimize", hideChat);
 ipcMain.on("window:close", hideChat);
 ipcMain.on("window:quit", () => app.quit());
-ipcMain.on("window:toggle-top", (_event, enabled) => chatWindow?.setAlwaysOnTop(Boolean(enabled)));
+ipcMain.on("window:toggle-top", (_event, enabled) => {
+  chatAlwaysOnTop = enabled === true;
+  if (chatWindow && !chatWindow.isDestroyed()) chatWindow.setAlwaysOnTop(chatAlwaysOnTop);
+});
 ipcMain.on("pet:move", (_event, x, y) => {
   if (!petWindow || !Number.isFinite(x) || !Number.isFinite(y)) return;
   const area = screen.getDisplayMatching(petWindow.getBounds()).workArea;
@@ -129,7 +134,7 @@ ipcMain.on("pet:settings", (_event, settings = {}) => {
     customAvatarData,
     size: Number.isFinite(size) ? Math.max(64, Math.min(144, Math.round(size / 8) * 8)) : 88,
     opacity: Number.isFinite(opacity) ? Math.max(40, Math.min(100, opacity)) : 100,
-    alwaysOnTop: settings.alwaysOnTop !== false,
+    alwaysOnTop: true,
     animate: settings.animate !== false
   };
   if (petWindow && !petWindow.isDestroyed()) {
