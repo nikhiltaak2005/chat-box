@@ -590,6 +590,28 @@ app.post("/api/groups/:groupId/members", requireAuth, async (req, res, next) => 
     return res.json({ group: await serializeGroup(group, req.userId) });
   } catch (err) { return next(err); }
 });
+
+app.patch("/api/groups/:groupId/admins", requireAuth, async (req, res, next) => {
+  try {
+    if (!isValidId(req.params.groupId) || !isValidId(req.body?.userId)) return res.status(400).json({ error: "Invalid group member." });
+    const group = await Group.findById(req.params.groupId);
+    if (!group || !isGroupMember(group, req.userId)) return res.status(404).json({ error: "Group not found." });
+    if (!isGroupAdmin(group, req.userId)) return res.status(403).json({ error: "Only admins can change admin roles." });
+    const targetId = req.body.userId;
+    const action = String(req.body?.action || "");
+    if (!isGroupMember(group, targetId) || !["promote", "demote"].includes(action)) return res.status(400).json({ error: "Choose a valid member and role action." });
+    if (targetId === group.createdBy.toString() && action === "demote") return res.status(400).json({ error: "The group creator must remain an admin." });
+    if (action === "promote" && !isGroupAdmin(group, targetId)) group.admins.push(targetId);
+    if (action === "demote") {
+      if (group.admins.length <= 1) return res.status(400).json({ error: "A group must always have at least one admin." });
+      group.admins = group.admins.filter(id => id.toString() !== targetId);
+    }
+    await group.save();
+    io.to("group:" + group._id.toString()).emit("group:updated", { groupId: group._id.toString() });
+    return res.json({ group: await serializeGroup(group, req.userId) });
+  } catch (err) { return next(err); }
+});
+
 app.delete("/api/groups/:groupId/members/:userId", requireAuth, async (req, res, next) => {
   try {
     if (!isValidId(req.params.groupId) || !isValidId(req.params.userId)) return res.status(400).json({ error: "Invalid group member." });
