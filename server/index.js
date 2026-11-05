@@ -113,7 +113,8 @@ const groupMessageSchema = new Schema({
   mediaUrl: { type: String, default: "", maxlength: 2000 },
   mediaPreviewUrl: { type: String, default: "", maxlength: 2000 },
   reactions: [{ userId: { type: Schema.Types.ObjectId, ref: "User", required: true }, emoji: { type: String, required: true, maxlength: 16 } }],
-  replyTo: { type: Schema.Types.ObjectId, ref: "GroupMessage", default: null }
+  replyTo: { type: Schema.Types.ObjectId, ref: "GroupMessage", default: null },
+  hiddenFor: { type: [Schema.Types.ObjectId], default: [] }
 }, { timestamps: true });
 const GroupMessage = mongoose.model("GroupMessage", groupMessageSchema);
 
@@ -527,7 +528,7 @@ app.get("/api/groups/:groupId/messages", requireAuth, async (req, res, next) => 
     if (!isValidId(req.params.groupId)) return res.status(400).json({ error: "Invalid group." });
     const group = await Group.findById(req.params.groupId);
     if (!group || !isGroupMember(group, req.userId)) return res.status(404).json({ error: "Group not found." });
-    const messages = await GroupMessage.find({ groupId: group._id }).sort({ createdAt: 1 }).limit(500);
+    const messages = await GroupMessage.find({ groupId: group._id, hiddenFor: { $ne: req.userId } }).sort({ createdAt: 1 }).limit(500);
     const senders = await User.find({ _id: { $in: [...new Set(messages.map(message => message.senderId.toString()))] } }).select("username displayName avatarData");
     const senderMap = new Map(senders.map(user => [user._id.toString(), user]));
     return res.json({ messages: messages.map(message => { const sender = senderMap.get(message.senderId.toString()); return { _id: message._id.toString(), groupId: group._id.toString(), senderId: message.senderId.toString(), senderName: sender?.displayName || sender?.username || "Member", senderUsername: sender?.username || "", senderAvatar: sender?.avatarData || "", body: message.body, contentType: message.contentType, mediaUrl: message.mediaUrl, mediaPreviewUrl: message.mediaPreviewUrl, reactions: (message.reactions || []).map(item => ({ userId: item.userId.toString(), emoji: item.emoji })), replyTo: message.replyTo?.toString() || null, createdAt: message.createdAt }; }) });
@@ -891,6 +892,46 @@ io.on("connection", (socket) => {
       console.error("[socket] group:message:send failed", err);
       return respond({ error: "Could not send group message." });
     }
+  });
+
+
+  socket.on("group:message:reaction", async (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    const allowedEmojis = ["👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "🙏", "👎", "🥹"];
+    try {
+      if (!isValidId(payload?.messageId) || !allowedEmojis.includes(String(payload?.emoji || ""))) return respond({ error: "Invalid reaction." });
+      const message = await GroupMessage.findById(payload.messageId);
+      if (!message) return respond({ error: "Message no longer exists." });
+      const group = await Group.findById(message.groupId);
+      if (!group || !isGroupMember(group, socket.userId)) return respond({ error: "You are not a member of this group." });
+      const existing = (message.reactions || []).find(item => item.userId.toString() === socket.userId);
+      if (existing?.emoji === payload.emoji) message.reactions = message.reactions.filter(item => item.userId.toString() !== socket.userId);
+      else { message.reactions = message.reactions.filter(item => item.userId.toString() !== socket.userId); message.reactions.push({ userId: socket.userId, emoji: payload.emoji }); }
+      await message.save();
+      const reactions = (message.reactions || []).map(item => ({ userId: item.userId.toString(), emoji: item.emoji }));
+      io.to("group:" + group._id.toString()).emit("group:message:reaction", { groupId: group._id.toString(), messageId: message._id.toString(), reactions });
+      return respond({ ok: true, reactions });
+    } catch (err) { console.error("[socket] group reaction failed", err); return respond({ error: "Could not save group reaction." }); }
+  });
+
+  socket.on("group:message:delete", async (payload, ack) => {
+    const respond = typeof ack === "function" ? ack : () => {};
+    try {
+      if (!isValidId(payload?.messageId) || !["me", "everyone"].includes(String(payload?.scope || ""))) return respond({ error: "Invalid delete request." });
+      const message = await GroupMessage.findById(payload.messageId);
+      if (!message) return respond({ error: "Message no longer exists." });
+      const group = await Group.findById(message.groupId);
+      if (!group || !isGroupMember(group, socket.userId)) return respond({ error: "You are not a member of this group." });
+      if (payload.scope === "everyone") {
+        if (message.senderId.toString() !== socket.userId) return respond({ error: "Only the sender can delete this message for everyone." });
+        await GroupMessage.deleteOne({ _id: message._id });
+        io.to("group:" + group._id.toString()).emit("group:message:deleted", { groupId: group._id.toString(), messageIds: [message._id.toString()] });
+      } else {
+        await GroupMessage.updateOne({ _id: message._id }, { $addToSet: { hiddenFor: socket.userId } });
+        io.to(socket.userId).emit("group:message:hidden", { groupId: group._id.toString(), messageIds: [message._id.toString()] });
+      }
+      return respond({ ok: true });
+    } catch (err) { console.error("[socket] group delete failed", err); return respond({ error: "Could not delete group message." }); }
   });
 
   socket.on("message:reaction", async (payload, ack) => {
