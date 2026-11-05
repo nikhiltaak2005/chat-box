@@ -410,6 +410,7 @@ app.delete("/api/account", requireAuth, async (req, res, next) => {
       Conversation.deleteMany({ participants: user._id }),
       FriendRequest.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }] })
     ]);
+    await removeUserFromGroups(user._id);
     await User.deleteOne({ _id: user._id });
     return res.json({ ok: true, message: "Account and associated conversations were deleted." });
   } catch (err) { return next(err); }
@@ -500,6 +501,29 @@ async function areAcceptedFriends(userId, otherIds) {
   const requests = await FriendRequest.find({ status: "accepted", $or: [{ senderId: userId, recipientId: { $in: ids } }, { recipientId: userId, senderId: { $in: ids } }] }).select("senderId recipientId");
   return new Set(requests.map(request => (request.senderId.toString() === userId.toString() ? request.recipientId : request.senderId).toString())).size === new Set(ids.map(id => id.toString())).size;
 }
+async function removeUserFromGroups(userId) {
+  const groups = await Group.find({ "members.userId": userId });
+  for (const group of groups) {
+    if (group.members.length <= 1) {
+      await GroupMessage.deleteMany({ groupId: group._id });
+      await group.deleteOne();
+      io.to("group:" + group._id.toString()).emit("group:deleted", { groupId: group._id.toString() });
+      continue;
+    }
+    const wasCreator = group.createdBy.toString() === userId.toString();
+    const remaining = group.members.filter(member => member.userId.toString() !== userId.toString());
+    group.members = remaining;
+    group.admins = group.admins.filter(id => id.toString() !== userId.toString());
+    if (wasCreator) {
+      group.createdBy = remaining[0].userId;
+      if (!group.admins.some(id => id.toString() === group.createdBy.toString())) group.admins.push(group.createdBy);
+    }
+    if (!group.admins.length) group.admins = [group.createdBy];
+    await group.save();
+    io.to("group:" + group._id.toString()).emit("group:updated", { groupId: group._id.toString() });
+  }
+}
+
 
 app.get("/api/groups", requireAuth, async (req, res, next) => {
   try { const groups = await Group.find({ "members.userId": req.userId }).sort({ updatedAt: -1 }).limit(100); return res.json({ groups: await Promise.all(groups.map(group => serializeGroup(group, req.userId))) }); }
@@ -611,6 +635,7 @@ app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req, re
     await Message.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }, { conversationId: { $in: conversationIds } }] });
     await Conversation.deleteMany({ _id: { $in: conversationIds } });
     await FriendRequest.deleteMany({ $or: [{ senderId: user._id }, { recipientId: user._id }] });
+    await removeUserFromGroups(user._id);
     await User.deleteOne({ _id: user._id });
     return res.json({ ok: true, deletedUsername: user.username });
   } catch (err) { return next(err); }
