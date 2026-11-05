@@ -245,11 +245,7 @@ export default function App() {
           window.desktop?.notifyIncoming(preview, { sound: preferencesRef.current.notifications.sound });
         }
       }
-      setContacts(prev => {
-        const found = prev.find(person => person._id === msg.senderId || person._id === msg.recipientId);
-        if (!found) request("/api/users", token).then(d => setContacts(d.users || [])).catch(() => {});
-        return prev;
-      });
+      // Contacts are private: only accepted friends are listed.
     });
     socket.on("message:read", payload => {
       if (payload?.conversationId !== activeRef.current?.conversationId) return;
@@ -329,9 +325,12 @@ export default function App() {
     setError("");
     try {
       await request("/api/friends/" + id, token, { method: "PATCH", body: JSON.stringify({ action }) });
-      const data = await request("/api/friends", token); setFriendRequests(data.requests || []);
-      const accepted = (data.requests || []).filter(item => item.status === "accepted").map(item => ({ ...item.person, isFriend: true }));
-      setContacts(accepted);
+      const data = await request("/api/friends", token);
+      setFriendRequests(data.requests || []);
+      setContacts((data.requests || []).filter(item => item.status === "accepted").map(item => ({ ...item.person, isFriend: true })));
+    } catch (e) { setError(e.message); }
+  }
+
   async function removeFriend(person) {
     const friendship = friendRequests.find(item => item.status === "accepted" && item.person?._id === person._id);
     if (!friendship) return;
@@ -343,9 +342,6 @@ export default function App() {
       setFriendRequests(data.requests || []);
       setContacts((data.requests || []).filter(item => item.status === "accepted").map(item => ({ ...item.person, isFriend: true })));
       if (active?._id === person._id) { setActive(null); setMessages([]); }
-    } catch (e) { setError(e.message); }
-  }
-
     } catch (e) { setError(e.message); }
   }
 
