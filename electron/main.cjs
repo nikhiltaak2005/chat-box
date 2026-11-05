@@ -5,7 +5,7 @@ const { autoUpdater } = require("electron-updater");
 let chatWindow;
 let petWindow;
 let unreadCount = 0;
-let petSettings = { avatar: "cat", customAvatarData: "", size: 88, opacity: 100, alwaysOnTop: true, animate: true };
+let petSettings = { avatar: "cat", customAvatarData: "", displayName: "PocketPal", showName: true, size: 88, opacity: 100, alwaysOnTop: true, animate: true };
 let chatAlwaysOnTop = false;
 let isQuitting = false;
 let updateState = { status: "idle", version: "", percent: 0, message: "Check for updates" };
@@ -77,7 +77,7 @@ function createPetWindow() {
 
 function createChatWindow() {
   chatWindow = new BrowserWindow({
-    width: 380, height: 610, minWidth: 320, minHeight: 420,
+    width: 460, height: 720, minWidth: 360, minHeight: 520,
     frame: false, transparent: false, alwaysOnTop: chatAlwaysOnTop, resizable: true,
     maximizable: false, autoHideMenuBar: true, backgroundColor: "#111318",
     title: "PocketChat", show: false,
@@ -132,6 +132,8 @@ ipcMain.on("pet:settings", (_event, settings = {}) => {
   petSettings = {
     avatar: avatars.includes(settings.avatar) && (settings.avatar !== "custom" || customAvatarData) ? settings.avatar : "cat",
     customAvatarData,
+    displayName: typeof settings.displayName === "string" ? settings.displayName.trim().slice(0, 24) : "PocketPal",
+    showName: settings.showName !== false,
     size: Number.isFinite(size) ? Math.max(64, Math.min(144, Math.round(size / 8) * 8)) : 88,
     opacity: Number.isFinite(opacity) ? Math.max(40, Math.min(100, opacity)) : 100,
     alwaysOnTop: true,
